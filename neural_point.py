@@ -314,22 +314,8 @@ class NeuralPointCloud(object):
             z_vals_valid = np.asarray([np.linspace(
                 z_vals_section[item[0]], z_vals_section[item[1]], num=num) for item in out])
             z_vals_total[~invalid] = z_vals_valid
+            # z_vals_total represents all rays' points' depth information
+            # replace valid rays with more sampling points. And the invalid rays with original average sampling points.
 
-        invalid_mask = torch.from_numpy(invalid).to(self.device)
+        invalid_mask = torch.from_numpy(invalid).to(self.device) # move invalid ray masks to GPUs
         return torch.from_numpy(z_vals_total).float().to(self.device), invalid_mask
-            
-            
-            
-        
-        
-
-
-
-
-
-                
-
-
-
-
-
