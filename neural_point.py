@@ -271,6 +271,49 @@ class NeuralPointCloud(object):
             Ds.append(D)
             Is.append(I)
             neighbor_nums.append(neighbor_num)
+        D = np.concatenate(Ds, axis=0)
+        I = np.concatenate(Is, axis=0)
+        neighbor_num = np.concatenate(neighbor_nums, axis=0)
+        # the concatenate will connect the appended array to be a whole array
+        # the shape of neighbor_num should be (points_num, )
+        # Every element in the neighbor_num is the number of neighbors for the corresponding point
+        
+        # to do this, we have to ensure that the points are evenly sampled for each ray.
+        neighbor_num = neighbor_num.reshape((n_rays, -1))
+        # After this calculation, the neighbor_num's now represents the number of neighbors for each ray
+        neighbor_num_bool = neighbor_num.astype(bool)
+        # a point is True if it has at least one neighbor
+        # a ray is invalid if it has less than two True points along the ray
+        invalid = neighbor_num_bool.sum(axis=-1) < 2
+        # invalid's shape -> (n_rays, )
+        # Here the invalid is a mask for invalid rays.
+        # Every element is True or False
+        
+        # if not every rays are invalid, do the sampling
+        if invalid.sum(axis=-1) < n_rays:
+            # select, for the valid rays, a subset of the 25 points along the ray (num points = 5) that are close to the surface.
+            r, c = np.where(neighbor_num[~invalid].astype(bool))
+            # r is the index of the ray
+            # c is the index of the point along the ray
+            idx = np.concatenate(
+                ([0], np.flatnonzero(r[1:] != r[:-1])+1, [r.size])
+            )
+            # For np.flatnonzero(r[1:] != r[:-1])+1:
+            # Here we use a trick to find the positions of adjacent non-equal elements in the array
+            # idx -> include the start position and end position of the valid ray index, and the position of the adjacent non-equal elements
+            out = [c[idx[i]:idx[i+1]] for i in range(len(idx)-1)]
+            # Find the corresponding point index for each ray
+            # out -> a list, each element is the index of the point along the ray
+            z_vals_valid = np.asarray([np.linspace(
+                z_vals_section[item[0]], z_vals_section[item[1]], num=num) for item in out])
+            z_vals_total[~invalid] = z_vals_valid
+
+        invalid_mask = torch.from_numpy(invalid).to(self.device)
+        return torch.from_numpy(z_vals_total).float().to(self.device), invalid_mask
+            
+            
+            
+        
         
 
 
