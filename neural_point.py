@@ -281,6 +281,7 @@ class NeuralPointCloud(object):
         # to do this, we have to ensure that the points are evenly sampled for each ray.
         neighbor_num = neighbor_num.reshape((n_rays, -1))
         # After this calculation, the neighbor_num's now represents the number of neighbors for each ray
+        # neighbor_num's shape -> (n_rays, points_number_along_each_rays)
         neighbor_num_bool = neighbor_num.astype(bool)
         # a point is True if it has at least one neighbor
         # a ray is invalid if it has less than two True points along the ray
@@ -293,15 +294,21 @@ class NeuralPointCloud(object):
         if invalid.sum(axis=-1) < n_rays:
             # select, for the valid rays, a subset of the 25 points along the ray (num points = 5) that are close to the surface.
             r, c = np.where(neighbor_num[~invalid].astype(bool))
-            # r is the index of the ray
-            # c is the index of the point along the ray
+            # np.where will return member's index which is True. But the index is split into rows and columns.
+            # r is the index of the ray, r means row index
+            # c is the index of the point along the ray, c means column index
+            # This step selects the valid rays and at the same time, get the true points with at least one neighbor.
+            # now row and column means: on those valid rays, the true point's row and column indexes.
             idx = np.concatenate(
                 ([0], np.flatnonzero(r[1:] != r[:-1])+1, [r.size])
             )
             # For np.flatnonzero(r[1:] != r[:-1])+1:
             # Here we use a trick to find the positions of adjacent non-equal elements in the array
-            # idx -> include the start position and end position of the valid ray index, and the position of the adjacent non-equal elements
+            # idx -> include the start position and end position of the valid ray index, and the position of the adjacent non-equal rays index
+            # Note that np.where will give the index as ascent sequence. So here, in idx we actually clear away all the repeated row indexes.
+            # idx means: the index of different rows. As the index in row also corresponds those in the column, the idx can also be used to index column to find the complete point coordinate.
             out = [c[idx[i]:idx[i+1]] for i in range(len(idx)-1)]
+            # Out use idx to index the specific points in the column. And now the element of out means the truly points index.
             # Find the corresponding point index for each ray
             # out -> a list, each element is the index of the point along the ray
             z_vals_valid = np.asarray([np.linspace(
