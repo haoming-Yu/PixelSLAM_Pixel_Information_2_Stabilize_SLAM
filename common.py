@@ -73,6 +73,31 @@ def get_camera_from_tensor(inputs):
         RT = RT[0]
     return RT
 
+def select_uv(i, j, n, depth, color, device='cuda:0'):
+    """
+    Select n pixels (u, v) from dense (u, v)
+    """
+    i = i.reshape(-1)
+    j = j.reshape(-1)
+    indices = torch.randint(i.shape[0], (n,), device=device)
+    indices = indices.clamp(0, i.shape[0])
+
+def get_sample_uv(H0, H1, W0, W1, n, depth, color, device='cuda:0'):
+    """
+    Sample n uv coordinates from an image region H0..(H1-1), W0..(W1-1)
+
+    """
+    depth = depth[H0:H1, W0:W1]
+    color = color[H0:H1, W0:W1]
+    i, j = torch.meshgrid(torch.linspace(
+        W0, W1 - 1, W1 - W0).to(device), torch.linespace(H0, H1-1, H1-H0).to(device), indexing='ij'
+    )
+    i = i.t()
+    j = j.t()
+    # Get the transpose of i and j
+    i, j, depth, color = select_uv()
+    
+
 def get_samples(H0, H1, W0, W1, n, fx, fy, cx, cy, c2w, depth, color, device,
                 depth_filter=False, return_index=False, depth_limit=None):
     """
@@ -80,4 +105,6 @@ def get_samples(H0, H1, W0, W1, n, fx, fy, cx, cy, c2w, depth, color, device,
     fx, fy, cx, cy: intrinsics.
     c2w is its camera pose and depth/color is the corresponding image tensor.
     """
-    
+    i, j, sample_depth, sample_color = get_sample_uv(
+        
+    )
