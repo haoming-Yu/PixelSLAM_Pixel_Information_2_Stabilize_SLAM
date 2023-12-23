@@ -1,3 +1,6 @@
+# This file is used to record the tools function
+# to process the camera coordinate.
+
 import numpy as np
 import random
 import torch
@@ -28,6 +31,16 @@ def as_intrinsics_matrix(intrinsics):
     # 0             | intrinsics[1] | intrinsics[3]
     # 0             | 0             | 1
     return K
+
+def clone_kf_dict(keyframes_dict):
+    cloned_keyfraomes_dict = []
+    for keyframe in keyframes_dict:
+        cloned_keyframe = {}
+        for key, value in keyframe.items():
+            cloned_value = value.clone()
+            cloned_keyframe[key] = cloned_value
+        cloned_keyfraomes_dict.append(cloned_keyframe)
+    return cloned_keyfraomes_dict
 
 def quad2rotation(quad):
     """
@@ -161,6 +174,13 @@ def get_sample_uv_with_grad(H0, H1, W0, W1, n, image):
     Sample n uv coordinates from an image region H0..H1, W0..W1
     image (numpy.ndarray): color image or estimated normal image
 
+    First, we sample 5n pixel index from image. And then do the masking
+    to get proper index within the range of H0, H1, W0, W1.
+
+    And because of the range selection, the points will be less or equal than 5n
+    Finally, do the random selection to get n points.
+
+    This is the reason why 5*n is sampled. And the 5 here is just a hyper-parameter.
     """
     intensity = rgb2gray(image.cpu().numpy()) # Get gray picture from rgb picture to get evaluate the gradient
     grad_y = filters.sobel_h(intensity) # find horizontal edges of an image using the sobel transform
@@ -173,6 +193,7 @@ def get_sample_uv_with_grad(H0, H1, W0, W1, n, image):
     # np.argpartition will do the sorting job. And here the axis=None will use the flattened array
     # select the last 5n grad in ascent order, so -5*n can select the biggest 5n gradient points
     indices_h, indices_w = np.unravel_index(selected_index, img_size)
+    # unravel_index is used to convert the flattened index into tuples of indexes, and the index is split into two lists.
     mask = (indices_h >= H0) & (indices_h < H1) & (
         indices_w >= W0) & (indices_w < W1)
     indices_h, indices_w = indices_h[mask], indices_w[mask]
@@ -204,8 +225,9 @@ def get_samples_with_pixel_grad(H0, H1, W0, W1, n_color, H, W, fx, fy, cx, cy, c
     i, j = np.unravel_index(merged_indices.astype(int), (H, W))
     i, j = torch.from_numpy(j).to(device).float(), torch.from_numpy(
         i).to(device).float()  # (i-cx), on column axis
+    # At the same time, switch the content of i, j
     rays_o, rays_d = get_rays_from_uv(i, j, c2w, fx, fy, cx, cy, device)
-    i, j = i.long(), j.long()
+    i, j = i.long(), j.long() # self.long() <=> self.to(torch.int64)
     sample_depth = depth[j, i]
     sample_color = color[j, i]
     if depth_filter:
@@ -219,3 +241,41 @@ def get_samples_with_pixel_grad(H0, H1, W0, W1, n_color, H, W, fx, fy, cx, cy, c
     if return_index:
         return rays_o, rays_d, sample_depth, sample_color, i.to(torch.int64), j.to(torch.int64)
     return rays_o, rays_d, sample_depth, sample_color
+
+def random_select(l, k):
+    """
+    Random select k values from 0 to (l-1)
+
+    """
+    return list(np.random.permutation(np.array(range(l)))[:min(l, k)])
+
+def get_tensor_from_camera(RT, Tquad=False):
+    """
+    Convert transformation matrix to quaternion and translation
+
+    """
+    gpu_id = -1
+    if type(RT) == torch.Tensor:
+        if RT.get_device() != -1:
+            RT = RT.detach().cpu()
+            # move the transformation matrix to cpu
+            # detach it from the computational graph
+            gpu_id = RT.get_device()
+            # refresh the gpu_id 
+        RT = RT.numpy() # use numpy to do the cpu computation
+    R, T = RT[:3, :3], RT[:3, 3]
+
+    from scipy.spatial.transform import Rotation
+    rot = Rotation.from_matrix(R)
+    quad = rot.as_quat()
+    quad = np.roll(quad, 1)
+
+    if Tquad:
+        tensor = np.concatenate([T, quad], 0)
+    else:
+        tensor = np.concatenate([quad, T], 0)
+    tensor = torch.from_numpy(tensor).float()
+    if gpu_id != -1:
+        # after the processing, move the tensor back to the gpus
+        tensor = tensor.to(gpu_id)
+    return tensor
