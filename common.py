@@ -279,3 +279,70 @@ def get_tensor_from_camera(RT, Tquad=False):
         # after the processing, move the tensor back to the gpus
         tensor = tensor.to(gpu_id)
     return tensor
+
+def get_rays(H, W, fx, fy, cx, cy, c2w, device, crop_edge=0):
+    """
+    Get rays for a whole image.
+
+    """
+    if isinstance(c2w, np.ndarray):
+        c2w = torch.from_numpy(c2w)
+    i, j = torch.meshgrid(torch.linspace(crop_edge, W-1-crop_edge, W-2*crop_edge),
+                          torch.linspace(crop_edge, H-1-crop_edge, H-2*crop_edge), indexing='ij')
+    i = i.t()
+    j = j.t()
+    dirs = torch.stack(
+        [(i-cx)/fx, -(j-cy)/fy, -torch.ones_like(i)], -1).to(device)
+    dirs = dirs.reshape(H-2*crop_edge, W-2*crop_edge, 1, 3)
+    rays_d = torch.sum(dirs * c2w[:3, :3], -1)
+    rays_o = c2w[:3, -1].expand(rays_d.shape)
+
+    return rays_o, rays_d
+
+def raw2outputs_nerf_color(raw, z_vals, rays_d, device='cuda:0', coef=0.1):
+    """
+    Transforms model's predictions to semantically meaningful values.
+
+    Args:
+        raw (tensor, (N_rays,N_samples,4) ): prediction from model. i.e. (R,G,B) and density
+        z_vals (tensor, (N_rays,N_samples) ): integration time. i.e. the sampled locations on this ray
+        rays_d (tensor, (N_rays,3) ): direction of each ray.
+        device (str, optional): device. Defaults to 'cuda:0'.
+        coef (float, optional): to multipy the input of sigmoid function when calculating occupancy. Defaults to 0.1.
+
+    Returns:
+        depth_map (tensor, N_rays): estimated distance to object.
+        depth_var (tensor, N_rays): depth variance/uncertainty along the ray, see eq(7) in paper.
+        rgb_map (tensor, (N_rays,3)): estimated RGB color of a ray.
+        weights (tensor, (N_rays,N_samples) ): weights assigned to each sampled color.
+    """
+    dists = z_vals[..., 1:] - z_vals[..., :-1] # the current depth minus the former neighbor's depth
+    # This is the neighboring distance of sample points on the same rays
+    # index: x, 0 -> distance between z_vals[x, 0] and z_vals[x, 1]
+    # dists shape -> (N_rays, N_samples - 1)
+    dists = dists.float()
+    # concatenate a infinite number 1e10 to the end of dists to compensate it as the same shape.
+    dists = torch.cat([dists, torch.Tensor([1e10]).float().to(
+        device).expand(dists[..., :1].shape)], -1)
+    # After the concatenation, the shape of the dists is (N_rays, N_samples)
+    # Here we should note that the dists[..., :1] will select dists[..., 0] as the same elements
+    # But the shape of dists[..., :1] is (N_rays, 1), and the shape of dists[..., 0] is (N_rays, )
+    rgb = raw[..., :-1]
+
+    raw[..., -1] = torch.sigmoid(coef*raw[..., -1])
+    alpha = raw[..., -1]
+
+    weights = alpha.float() * torch.cumprod(
+        torch.cat(
+            [torch.ones((alpha.shape[0], 1)).to(device).float(), (1.-alpha + 1e-10).float()], -1).float(), dim=-1
+    )[:, :-1]
+    weights_sum = torch.sum(weights, dim=-1).unsqueeze(-1)+1e-10
+    rgb_map = torch.sum(weights[..., None] * rgb, -2)/weights_sum
+    depth_map = torch.sum(weights * z_vals, -1)/weights_sum.squeeze(-1)
+
+    tmp = (z_vals - depth_map.unsqueeze(-1))
+    depth_var = torch.sum(weights*tmp*tmp, dim=1)
+    return depth_map, depth_var, rgb_map, weights
+
+    
+
