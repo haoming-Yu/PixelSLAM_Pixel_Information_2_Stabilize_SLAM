@@ -77,7 +77,6 @@ class Renderer(object):
 
         return ret, ray_mask, point_mask
     
-    # Need to understand this function
     def render_batch_ray(self, npc, decoders, rays_d, rays_o, device, stage, gt_depth=None,
                          npc_geo_feats=None, npc_col_feats=None, is_tracker=False, cloud_pos=None,
                          dynamic_r_query=None, exposure_feat=None):
@@ -85,7 +84,7 @@ class Renderer(object):
         Render color, depth, uncertainty and a valid ray mask from a batch of rays.
 
         Args:
-            npc (): Neural point cloud.
+            npc (self created class): Neural point cloud.
             decoders (nn.module): decoders.
             rays_d (tensor, N*3): rays direction.
             rays_o (tensor, N*3): rays origin.
@@ -94,6 +93,7 @@ class Renderer(object):
             gt_depth (tensor, optional): sensor depth image. Defaults to None. input (N, )
             npc_geo_feats (tensor): point cloud geometry features, cloned from npc. Optimizable during mapping.
             npc_col_feats (tensor): point cloud color features. Optimizable during mapping.
+            -> The reason why we had to add this is that the features need to be optimizable during mapping.
             is_tracker (bool, optional): tracker has different gradient flow in eval_points.
             cloud_pos (tensor): positions of all point cloud features, used only when tracker calls.
             dynamic_r_query (tensor, optional): if use dynamic query, for every ray, its query radius is different.
@@ -205,7 +205,6 @@ class Renderer(object):
             depth[~gt_non_zero_mask] = 0
         return depth, uncertainty, color, valid_ray_mask
 
-    # Need to understand this function
     def render_img(self, npc, decoders, c2w, device, stage, gt_depth=None,
                    npc_geo_feats=None, npc_col_feats=None,
                    dynamic_r_query=None, cloud_pos=None, exposure_feat=None):
