@@ -1,3 +1,6 @@
+# This file is used to create visualization result
+# JUst a utility class
+
 import os
 import torch
 import numpy as np

@@ -1,8 +1,6 @@
 verbose: True # will use tqdm
 low_gpu_mem: True # empty cuda cache after each optimization loop for tracker and mapper
 use_dynamic_radius: True # choose radius_add and radius_query dynamically based on color gradients
-wandb: False # automatically logs to weights and biases when True. Requires account.
-wandb_folder : "/home/notchla/point-slam/output" # local folder to wandb output
 setup_seed: 1219
 reconstruction_datasets: ["replica"] # add the names of the datasets to be meshed
 render_datasets: ["replica"] # add the names of the datasets to be rendered (depth and color)
