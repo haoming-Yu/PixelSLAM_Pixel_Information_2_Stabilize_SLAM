@@ -20,6 +20,22 @@ class Renderer(object):
 
         self.H, self.W, self.fx, self.fy, self.cx, self.cy = slam.H, slam.W, slam.fx, slam.fy, slam.cx, slam.cy
 
+    # This function is a wrapper of the eval_points to provide simpler interface for occupancy getting
+    def get_occupancy_from_geo_mapper(self, p, decoders, npc, npc_geo_feats=None, device=None):
+        """
+        Get the corresponding point occupancy. Note that the geometry occupancy should have nothing to do with the camera pose to get a consistent model
+
+        """
+        assert torch.is_tensor(p)
+        if device == None:
+            device = npc.device()
+        ret, _, _ = decoders(p=p, npc=npc, stage='geometry', npc_geo_feats=npc_geo_feats,
+                             npc_col_feats=None, pts_num=0, is_tracker=False, cloud_pos=None, dynamic_r_query=None)
+        # Here we need to notice that we do not need to use dynamic_r_query to get the c_dim, because the p should only contains the actual points. Not the sampling points
+        # Now the ret represents the occupancy of the points
+        return ret
+
+
     # This function will call the decoders.
     def eval_points(self, p, decoders, npc, stage='color', device=None,
                     npc_geo_feats=None, npc_col_feats=None,

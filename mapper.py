@@ -102,15 +102,47 @@ class Mapper(object):
         self.logger = Logger(cfg, args, self)
         self.visualizer = Visualizer(freq=cfg['mapping']['vis_freq'], inside_freq=cfg['mapping']['vis_inside_freq'],
                                      vis_dir=os.path.join(self.output, 'mapping_vis'), renderer=self.renderer,
-                                     verbose=self.verbose, device=self.device, wandb=self.wandb,
+                                     verbose=self.verbose, device=self.device,
                                      vis_inside=self.vis_inside, total_iters=self.num_joint_iters,
                                      img_dir=os.path.join(self.output, 'rendered_image'))
         self.H, self.W, self.fx, self.fy, self.cx, self.cy = slam.H, slam.W, slam.fx, slam.fy, slam.cx, slam.cy
         self.npc_geo_feats = None
         self.npc_col_feats = None
+        self.optimizer = None
 
     def set_pipe(self, pipe):
         self.pipe = pipe
+
+    # Now the p's reference still has a problem.
+    def prune_by_occupancy(self, p, npc_geo_feats, min_occpancy=0.005):
+        occupancy = self.renderer.get_occupancy_from_geo_mapper(self, p, self.decoders, self.npc, npc_geo_feats, device=self.device)
+        prune_mask = (occupancy < min_occpancy).squeeze()
+        self.prune_points(prune_mask)
+
+    def _prune_optimizer(self, mask):
+        cnt = 0
+        for group in self.optimizer.param_groups:
+            if cnt == 0:
+                continue
+            # 1 is the geometry parameters in point cloud
+            # 2 is the color parameters in point cloud
+            # 0 is the parameters of the decoders, thus not changed in the pruning. Needs to do further training.
+            stored_state = self.optimizer.state.get(group['params'][0], None)
+            if stored_state is not None:
+                stored_state["exp_avg"] = stored_state["exp_avg"][mask]
+                stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
+                del self.optimizer.state[group['params'][0]]
+                group['params'][0] = torch.nn.Parameter((group['params'][0][mask].requires_grad_(True)))
+                self.optimizer.state[group['params'][0]] = stored_state
+            else:
+                group['params'][0] = torch.nn.Parameter(group['params'][0][mask].requires_grad_(True))
+            cnt = cnt + 1
+
+    def prune_points(self, mask):
+        valid_points_mask = ~mask
+        self._prune_optimizer(valid_points_mask)
+        # refresh the neural point cloud storage and the features storage.
+
 
     # This is used to get the frustum mask based on the c2w arguments and current depth map.
     def get_mask_from_c2w(self, c2w, depth_np):
@@ -269,16 +301,19 @@ class Mapper(object):
                 num = self.mapping_window_size-2
                 optimize_frame = self.keyframe_selection_overlap(
                     cur_gt_color, cur_gt_depth, cur_c2w, keyframe_dict[:-1], num)
+                # Here keyframe_dict[:-1] will except the last frame. 
+                # Because the last frame will be added into the list afterwards.
 
         # add the last keyframe and the current frame(use -1 to denote)
         oldest_frame = None
         if len(keyframe_list) > 0:
-            optimize_frame = optimize_frame + [len(keyframe_list)-1]
-            oldest_frame = min(optimize_frame)
-        optimize_frame += [-1]
+            optimize_frame = optimize_frame + [len(keyframe_list)-1] # add the last frame
+            oldest_frame = min(optimize_frame) # label the oldest frame.
+        optimize_frame += [-1] # add the current frame.
 
         if self.save_selected_keyframes_info:
             keyframes_info = []
+            # Here id is of no use.
             for id, frame in enumerate(optimize_frame):
                 if frame != -1:
                     frame_idx = keyframe_list[frame]
@@ -291,6 +326,7 @@ class Mapper(object):
                 keyframes_info.append(
                     {'idx': frame_idx, 'gt_c2w': tmp_gt_c2w, 'est_c2w': tmp_est_c2w})
             self.selected_keyframes[idx] = keyframes_info
+        # if save_selected_keyframes_info is avtivated, the selected_keyframes will store current mapping frame's corresponding keyframes' information 
 
         pixs_per_image = self.mapping_pixels//len(optimize_frame)
 
@@ -397,12 +433,16 @@ class Mapper(object):
         if self.encode_exposure:
             optim_para_list.append(
                 {'params': self.exposure_feat, 'lr': 0.001})
+            
         optimizer = torch.optim.Adam(optim_para_list)
+        self.optimizer = optimizer
 
         if idx > 0 and not color_refine:
             num_joint_iters = np.clip(int(num_joint_iters*frame_pts_add/300), int(
                 self.min_iter_ratio*num_joint_iters), 2*num_joint_iters)
 
+        # Here should be a changing point.
+        # If we need to add a pruning strategy, we should add it here.
         for joint_iter in range(num_joint_iters):
             tic = time.perf_counter()
             if self.frustum_feature_selection:
@@ -566,18 +606,21 @@ class Mapper(object):
                 npc_geo_feats, npc_col_feats = geo_feats.detach(), col_feats.detach()
 
             toc = time.perf_counter()
-            if not self.wandb:
-                if joint_iter % 100 == 0:
-                    if self.stage == 'geometry':
-                        print('iter: ', joint_iter, ', time',
-                              f'{toc - tic:0.6f}', ', geo_loss: ', f'{geo_loss.item():0.6f}')
-                    else:
-                        print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
-                              ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
+            
+            if joint_iter % 100 == 0:
+                if self.stage == 'geometry':
+                    print('iter: ', joint_iter, ', time',
+                            f'{toc - tic:0.6f}', ', geo_loss: ', f'{geo_loss.item():0.6f}')
+                else:
+                    print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
+                            ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
 
             if joint_iter == num_joint_iters-1:
                 print('idx: ', idx.item(), ', time', f'{toc - tic:0.6f}', ', geo_loss_pixel: ', f'{(geo_loss.item()/depth_mask.sum().item()):0.6f}',
                       ', color_loss_pixel: ', f'{(color_loss.item()/depth_mask.sum().item()):0.4f}')
+
+        # When the mapping is stable, we should do the pruning. And after the pruning, we should do the mapping again to make the representation more rubost.
+        # Considering whether to do the point-adding strategy of Gaussian during mapping.
 
         if (not self.vis_inside) or idx == 0:
             self.visualizer.vis(idx, self.num_joint_iters-1, cur_gt_depth, cur_gt_color, cur_c2w, self.npc, self.decoders,
@@ -765,12 +808,12 @@ class Mapper(object):
 
         try:
             print('✨ Point-SLAM finished, evaluating...')
-            ate_rmse = subprocess.run(['python', '-u', 'src/tools/eval_ate.py', str(cfg['config_path']), '--output', str(cfg['data']['output'])],
+            ate_rmse = subprocess.run(['python', '-u', 'tools/eval_ate.py', str(cfg['config_path']), '--output', str(cfg['data']['output'])],
                                       text=True, check=True, capture_output=True)
             print('ate_rmse: ', ate_rmse.stdout)
             ate_rmse = literal_eval(str(ate_rmse.stdout))
 
-            ate_rmse_no_align = subprocess.run(['python', '-u', 'src/tools/eval_ate.py', str(cfg['config_path']), '--output', str(cfg['data']['output']), '--no_align'],
+            ate_rmse_no_align = subprocess.run(['python', '-u', 'tools/eval_ate.py', str(cfg['config_path']), '--output', str(cfg['data']['output']), '--no_align'],
                                                text=True, check=True, capture_output=True)
             print('ate_rmse_wo_align: ', ate_rmse_no_align.stdout)
             ate_rmse_no_align = literal_eval(str(ate_rmse_no_align.stdout))
@@ -861,7 +904,7 @@ class Mapper(object):
         if cfg['dataset'] in cfg["reconstruction_datasets"]:
             try:
                 print('Construct Mesh...')
-                params_list = ['python', '-u', 'src/tools/get_mesh_tsdf_fusion.py',
+                params_list = ['python', '-u', 'tools/get_mesh_tsdf_fusion.py',
                                str(cfg['config_path']
                                    ), '--output', cfg['data']['output'], '--no_render']
                 if not cfg['meshing']['eval_rec']:

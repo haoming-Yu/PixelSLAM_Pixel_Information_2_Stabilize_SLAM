@@ -344,5 +344,47 @@ def raw2outputs_nerf_color(raw, z_vals, rays_d, device='cuda:0', coef=0.1):
     depth_var = torch.sum(weights*tmp*tmp, dim=1)
     return depth_map, depth_var, rgb_map, weights
 
-    
+def get_selected_index_with_grad(H0, H1, W0, W1, n, image, ratio=15, gt_depth=None, depth_limit=False):
+    """
+    return uv coordinates with top color gradient from an image region H0..H1, W0..W1
+
+    Args:
+        H0 (int): top start point in pixels
+        H1 (int): bottom edge end in pixels
+        W0 (int): left start point in pixels
+        W1 (int): right edge end in pixels
+        n (int): number of samples
+        image (tensor): color image
+        ratio (int): sample from top ratio * n pixels within the region.
+        This should ideally be dependent on the image size in percentage.
+        gt_depth (tensor): depth input, will be passed if using self.depth_limit
+        depth_limit (bool): if True, limits samples where the gt_depth is samller than 5 m
+    Returns:
+        selected_index (ndarray): index of top color gradient uv coordinates
+    """
+    intensity = rgb2gray(image.cpu().numpy())
+    grad_y = filters.sobel_h(intensity)
+    grad_x = filters.sobel_v(intensity)
+    grad_mag = np.sqrt(grad_x**2 + grad_y**2)
+
+    # random sample from top ratio*n elements within the region
+    img_size = (image.shape[0], image.shape[1])
+    # try skip the top color grad. pixels
+    selected_index = np.argpartition(grad_mag, -ratio*n, axis=None)[-ratio*n:]
+    indices_h, indices_w = np.unravel_index(selected_index, img_size)
+    mask = (indices_h >= H0) & (indices_h < H1) & (
+        indices_w >= W0) & (indices_w < W1)
+    if gt_depth is not None:
+        if depth_limit:
+            mask_depth = torch.logical_and((gt_depth[torch.from_numpy(indices_h).to(image.device), torch.from_numpy(indices_w).to(image.device)] <= 5.0),
+                                           (gt_depth[torch.from_numpy(indices_h).to(image.device), torch.from_numpy(indices_w).to(image.device)] > 0.0))
+        else:
+            mask_depth = gt_depth[torch.from_numpy(indices_h).to(
+                image.device), torch.from_numpy(indices_w).to(image.device)] > 0.0
+        mask = mask & mask_depth.cpu().numpy()
+    indices_h, indices_w = indices_h[mask], indices_w[mask]
+    selected_index = np.ravel_multi_index(
+        np.array((indices_h, indices_w)), img_size)
+
+    return selected_index, grad_mag
 

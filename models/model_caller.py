@@ -1,4 +1,4 @@
-import decoder as proto_decoder
+from models import decoder as proto_decoder
 
 """
 Here cfg is a dictionary to represent all the parameters.
