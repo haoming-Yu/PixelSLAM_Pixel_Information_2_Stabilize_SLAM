@@ -87,26 +87,23 @@ class BaseDataset(Dataset):
     def __getitem__(self, index):
         color_path = self.color_paths[index]
         depth_path = self.depth_paths[index]
-        # We need to notice that these two paths should only be used in the inherited class.
-        # And the BaseDataset class should never be used directly. 
-        # This class should only be used for creating new dataset.
-        color_data = cv2.imread(color_path) 
+        color_data = cv2.imread(color_path)
         if '.png' in depth_path:
             depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
         elif '.exr' in depth_path:
             depth_data = readEXR_onlydepth(depth_path)
         if self.distortion is not None:
             K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
-            # undistortion is only applied on color image, not depth
+            # undistortion is only applied on color image, not depth!
             color_data = cv2.undistort(color_data, K, self.distortion)
-        
+
         color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
-        color_data = color_data / 255. # scale the color to 0~1
+        color_data = color_data / 255.
         depth_data = depth_data.astype(np.float32) / self.png_depth_scale
         H, W = depth_data.shape
         color_data = cv2.resize(color_data, (W, H))
         color_data = torch.from_numpy(color_data)
-        depth_data = depth_data.astype(np.float32) / self.png_depth_scale # scale the depth to 0~1
+        depth_data = torch.from_numpy(depth_data)
         if self.crop_size is not None:
             # follow the pre-processing step in lietorch, actually is resize
             color_data = color_data.permute(2, 0, 1)
@@ -115,7 +112,7 @@ class BaseDataset(Dataset):
             depth_data = F.interpolate(
                 depth_data[None, None], self.crop_size, mode='nearest')[0, 0]
             color_data = color_data.permute(1, 2, 0).contiguous()
-        
+
         edge = self.crop_edge
         if edge > 0:
             color_data = color_data[edge:-edge, edge:-edge]

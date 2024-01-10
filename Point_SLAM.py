@@ -5,8 +5,8 @@ import torch.multiprocessing as mp
 from multiprocessing.managers import BaseManager
 
 import config
-import mapper
-import tracker
+from mapper import Mapper
+from tracker import Tracker
 from utils.datasets import get_dataset
 from utils.Renderer import Renderer
 from neural_point import NeuralPointCloud
@@ -99,8 +99,8 @@ class Point_SLAM():
             self.npc = NeuralPointCloud(cfg)
 
         self.renderer = Renderer(cfg, args, self)
-        self.mapper = mapper(cfg, args, self)
-        self.tracker = tracker(cfg, args, self)
+        self.mapper = Mapper(cfg, args, self)
+        self.tracker = Tracker(cfg, args, self)
         self.print_output_desc()
 
     def print_output_desc(self):

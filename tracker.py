@@ -17,8 +17,6 @@ from skimage.color import rgb2gray
 from skimage import filters
 from scipy.interpolate import interp1d
 
-import wandb
-
 
 class Tracker(object):
     def __init__(self, cfg, args, slam
@@ -67,7 +65,6 @@ class Tracker(object):
         self.every_frame = cfg['mapping']['every_frame']
         self.lazy_start = cfg['mapping']['lazy_start']
         self.mapping_window_size = cfg['mapping']['mapping_window_size']
-        self.wandb = cfg['wandb']
         self.encode_exposure = cfg['model']['encode_exposure']
 
         self.prev_mapping_idx = -1  # init, used for mapping state
@@ -208,11 +205,6 @@ class Tracker(object):
 
         if self.use_dynamic_radius:
             os.makedirs(f'{self.output}/dynamic_r_frame', exist_ok=True)
-        if self.wandb and not self.gt_camera:
-            wandb.init(project=self.cfg['project_name'],
-                       group=f'slam_{scene_name}',
-                       name='tracker_'+time_string,
-                       dir=self.cfg["wandb_folder"], tags=[scene_name])
 
         if self.verbose:
             pbar = self.frame_loader
@@ -348,21 +340,13 @@ class Tracker(object):
                     if cam_iter == self.num_cam_iters-1:
                         idx_loss_camera_tensor = torch.abs(gt_camera_tensor.to(
                             device)-candidate_cam_tensor)
-                        if not self.wandb:
-                            print(f'idx:{idx}, re-rendering loss: {initial_loss:.2f}->{current_min_loss:.2f}, ' +
-                                  f'camera_quad_error: {initial_loss_camera_tensor[:4].mean().item():.4f}->{idx_loss_camera_tensor[:4].mean().item():.4f}, '
-                                  + f'camera_pos_error: {initial_loss_camera_tensor[-3:].mean().item():.4f}->{idx_loss_camera_tensor[-3:].mean().item():.4f}')
-                        if self.wandb and not self.gt_camera:
-                            wandb.log({'camera_quad_error': idx_loss_camera_tensor[:4].mean().item(),
-                                       'camera_pos_error': idx_loss_camera_tensor[-3:].mean().item(),
-                                       'color_loss_tracker': color_loss_pixel,
-                                       'geo_loss_tracker': geo_loss_pixel,
-                                       'idx_track': int(idx.item())})
+                        print(f'idx:{idx}, re-rendering loss: {initial_loss:.2f}->{current_min_loss:.2f}, ' +
+                                f'camera_quad_error: {initial_loss_camera_tensor[:4].mean().item():.4f}->{idx_loss_camera_tensor[:4].mean().item():.4f}, '
+                                + f'camera_pos_error: {initial_loss_camera_tensor[-3:].mean().item():.4f}->{idx_loss_camera_tensor[-3:].mean().item():.4f}')
                     else:
                         if cam_iter % 20 == 0:
-                            if not self.wandb:
-                                print(
-                                    f'iter: {cam_iter}, camera tensor error: {loss_camera_tensor:.4f}')
+                            print(
+                                f'iter: {cam_iter}, camera tensor error: {loss_camera_tensor:.4f}')
 
                     self.visualizer.vis(
                         idx, cam_iter, gt_depth, gt_color, camera_tensor,
@@ -389,6 +373,3 @@ class Tracker(object):
 
             if self.low_gpu_mem:
                 torch.cuda.empty_cache()
-
-        if self.wandb and not self.gt_camera:
-            wandb.finish()
