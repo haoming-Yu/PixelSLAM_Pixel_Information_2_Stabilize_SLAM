@@ -45,6 +45,17 @@ class NeuralPointCloud(object):
         if index is None:
             return self._cloud_pos
         return self._cloud_pos[index]
+    
+    # These methods are used in pruning.
+
+    def write_back_cloud_pos(self, refreshed_cld_pos):
+        self._cloud_pos = refreshed_cld_pos
+
+    def write_geo_feats(self, refreshed_geo_feats):
+        self.geo_feats = refreshed_geo_feats
+
+    def write_col_feats(self, refreshed_col_feats):
+        self.col_feats = refreshed_col_feats
 
     def input_pos(self):
         return self._input_pos

@@ -193,7 +193,7 @@ def main():
 
     args = parser.parse_args()
     assert torch.cuda.is_available(), 'GPU required for reconstruction.'
-    cfg = config.load_config(args.config, "configs/point_slam.yaml")
+    cfg = config.load_config(args.config, "configs/whole.yaml")
     device = cfg['mapping']['device']
 
     # define variables for dynamic query radius computation

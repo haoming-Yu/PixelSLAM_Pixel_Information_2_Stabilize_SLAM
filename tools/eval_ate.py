@@ -274,7 +274,7 @@ if __name__ == '__main__':
                         help='if to align the first and second trajectory before evaluating')
 
     args = parser.parse_args()
-    cfg = config.load_config(args.config, 'configs/point_slam.yaml')
+    cfg = config.load_config(args.config, 'configs/whole.yaml')
     output = cfg['data']['output'] if args.output is None else args.output
     ckptsdir = f'{output}/ckpts'
     if os.path.exists(ckptsdir):
