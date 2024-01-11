@@ -113,11 +113,23 @@ class Mapper(object):
     def set_pipe(self, pipe):
         self.pipe = pipe
 
-    # Now the p's reference still has a problem.
-    def prune_by_occupancy(self, p, npc_geo_feats, min_occpancy=0.005):
+    def prune_by_occupancy(self, p, npc_geo_feats, indices, min_occpancy=0.005):
+        """
+        Args:
+            p: represents all points in the point cloud
+            npc_geo_feats: represents all points' geometry features
+            indices: represents current frustum's selected points
+        
+        Returns:
+            1. return the number of points need to be pruned
+            2. return the refreshed npc_geo_feats
+            3. return the refreshed npc_col_feats
+            4. return the refreshed self.cloud_pos_tensor
+        """
         occupancy = self.renderer.get_occupancy_from_geo_mapper(self, p, self.decoders, self.npc, npc_geo_feats, device=self.device)
         prune_mask = (occupancy < min_occpancy).squeeze()
-        self.prune_points(prune_mask)
+        self.prune_points(prune_mask, indices)
+        return torch.sum(prune_mask) # Needs to add other things.
 
     def _prune_optimizer(self, mask):
         cnt = 0
@@ -138,11 +150,22 @@ class Mapper(object):
                 group['params'][0] = torch.nn.Parameter(group['params'][0][mask].requires_grad_(True))
             cnt = cnt + 1
 
-    def prune_points(self, mask):
+    def prune_points(self, mask, indices):
         valid_points_mask = ~mask
         self._prune_optimizer(valid_points_mask)
         # refresh the neural point cloud storage and the features storage.
+        point_cloud = self.npc.cloud_pos()
+        geo_feats = self.npc.get_geo_feats()
+        col_feats = self.npc.get_col_feats()
+        point_cloud = point_cloud[valid_points_mask]
+        geo_feats = geo_feats[valid_points_mask]
+        col_feats = col_feats[valid_points_mask]
+        self.npc.write_back_cloud_pos(point_cloud)
+        self.npc.write_geo_feats(geo_feats)
+        self.npc.write_col_feats(col_feats)
 
+        # Return the number of pruned points
+        return torch.sum(valid_points_mask)
 
     # This is used to get the frustum mask based on the c2w arguments and current depth map.
     def get_mask_from_c2w(self, c2w, depth_np):
@@ -372,11 +395,12 @@ class Mapper(object):
         if self.encode_exposure:
             self.exposure_feat = self.exposure_feat_shared[0].clone(
             ).requires_grad_()
-
+        indices_for_frustum_selection = None
         if self.frustum_feature_selection:  # required if not color_refine
             masked_c_grad = {}
             mask_c2w = cur_c2w
             indices = self.get_mask_from_c2w(mask_c2w, gt_depth_np)
+            indices_for_frustum_selection = indices
             geo_pcl_grad = npc_geo_feats[indices].detach(
             ).clone().requires_grad_(True)
             color_pcl_grad = npc_col_feats[indices].detach(
@@ -618,6 +642,10 @@ class Mapper(object):
             if joint_iter == num_joint_iters-1:
                 print('idx: ', idx.item(), ', time', f'{toc - tic:0.6f}', ', geo_loss_pixel: ', f'{(geo_loss.item()/depth_mask.sum().item()):0.6f}',
                       ', color_loss_pixel: ', f'{(color_loss.item()/depth_mask.sum().item()):0.4f}')
+
+        # Now do the pruning
+        _, npc_geo_feats, npc_col_feats, self.cloud_pos_tensor = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, indices_for_frustum_selection)
+        # Now do the retraining to get a cleaner representation.
 
         # When the mapping is stable, we should do the pruning. And after the pruning, we should do the mapping again to make the representation more rubost.
         # Considering whether to do the point-adding strategy of Gaussian during mapping.
@@ -915,7 +943,8 @@ class Mapper(object):
                         params_list, text=True, check=True, capture_output=True)
                     result_recon = str(result_recon_obj.stdout)
                 except subprocess.CalledProcessError as e:
-                    print(e.stderr)
+                    #print(e.stderr)
+                    print("...\n")
 
                 # requires only one pair {} inside the printed result
                 print(result_recon)
@@ -927,8 +956,10 @@ class Mapper(object):
                 torch.cuda.empty_cache()
 
             except Exception as e:
-                traceback.print_exception(e)
-                print('Failed to evaluate 3D reconstruction.')
+                # traceback.print_exception(e)
+                # print('Failed to evaluate 3D reconstruction.')
+                torch.cuda.empty_cache()
+                print("...\n")
 
         if os.path.exists(f'{self.output}/dynamic_r_frame'):
             shutil.rmtree(f'{self.output}/dynamic_r_frame')
