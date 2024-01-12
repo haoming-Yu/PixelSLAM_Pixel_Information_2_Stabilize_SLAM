@@ -113,11 +113,12 @@ class Mapper(object):
     def set_pipe(self, pipe):
         self.pipe = pipe
 
-    def prune_by_occupancy(self, p, npc_geo_feats, indices, min_occpancy=0.005):
+    def prune_by_occupancy(self, p, npc_geo_feats, npc_col_feats, indices, min_occpancy=0.005):
         """
         Args:
             p: represents all points in the point cloud
             npc_geo_feats: represents all points' geometry features
+            npc_col_feats: represents all points' color features
             indices: represents current frustum's selected points
         
         Returns:
@@ -128,8 +129,8 @@ class Mapper(object):
         """
         occupancy = self.renderer.get_occupancy_from_geo_mapper(self, p, self.decoders, self.npc, npc_geo_feats, device=self.device)
         prune_mask = (occupancy < min_occpancy).squeeze()
-        self.prune_points(prune_mask, indices)
-        return torch.sum(prune_mask) # Needs to add other things.
+        pruned_num, point_cld, geo_features, col_features = self.prune_points(prune_mask, indices, npc_geo_feats, npc_col_feats)
+        return pruned_num, geo_features, col_features, point_cld # Needs to add other things.
 
     def _prune_optimizer(self, mask):
         cnt = 0
@@ -150,22 +151,26 @@ class Mapper(object):
                 group['params'][0] = torch.nn.Parameter(group['params'][0][mask].requires_grad_(True))
             cnt = cnt + 1
 
-    def prune_points(self, mask, indices):
+    def prune_points(self, mask, indices, npc_geo_feats, npc_col_feats):
         valid_points_mask = ~mask
         self._prune_optimizer(valid_points_mask)
         # refresh the neural point cloud storage and the features storage.
         point_cloud = self.npc.cloud_pos()
-        geo_feats = self.npc.get_geo_feats()
-        col_feats = self.npc.get_col_feats()
-        point_cloud = point_cloud[valid_points_mask]
-        geo_feats = geo_feats[valid_points_mask]
-        col_feats = col_feats[valid_points_mask]
-        self.npc.write_back_cloud_pos(point_cloud)
+        geo_feats = npc_geo_feats
+        col_feats = npc_col_feats
+        point_cloud = point_cloud[indices][valid_points_mask]
+        geo_feats = geo_feats[indices][valid_points_mask]
+        col_feats = col_feats[indices][valid_points_mask]
         self.npc.write_geo_feats(geo_feats)
         self.npc.write_col_feats(col_feats)
+        self.npc.write_back_cloud_pos(point_cloud)
 
+        # Maybe we should add the index training of the points
+        # This step is the same as add_neural_points' index training process.
+        # The index training will not change the storage of current point cloud list
+        # And the index training has been added in the function write_back_cloud_pos.
         # Return the number of pruned points
-        return torch.sum(valid_points_mask)
+        return torch.sum(mask), point_cloud, geo_feats, col_feats
 
     # This is used to get the frustum mask based on the c2w arguments and current depth map.
     def get_mask_from_c2w(self, c2w, depth_np):
@@ -643,10 +648,6 @@ class Mapper(object):
                 print('idx: ', idx.item(), ', time', f'{toc - tic:0.6f}', ', geo_loss_pixel: ', f'{(geo_loss.item()/depth_mask.sum().item()):0.6f}',
                       ', color_loss_pixel: ', f'{(color_loss.item()/depth_mask.sum().item()):0.4f}')
 
-        # Now do the pruning
-        _, npc_geo_feats, npc_col_feats, self.cloud_pos_tensor = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, indices_for_frustum_selection)
-        # Now do the retraining to get a cleaner representation.
-
         # When the mapping is stable, we should do the pruning. And after the pruning, we should do the mapping again to make the representation more rubost.
         # Considering whether to do the point-adding strategy of Gaussian during mapping.
 
@@ -666,6 +667,13 @@ class Mapper(object):
         self.npc_geo_feats = npc_geo_feats
         self.npc_col_feats = npc_col_feats
         print('Mapper has updated point features.')
+
+        print("Now Start pruning")
+        # We should do the pruning after the features have been written back.
+        # Now do the pruning
+        _, npc_geo_feats, npc_col_feats, self.cloud_pos_tensor = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, indices_for_frustum_selection)
+        print(f'{_} locations pruned out.')
+        # Now do the retraining to get a cleaner representation.
 
         if self.BA:
             # put the updated camera poses back

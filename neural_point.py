@@ -50,6 +50,7 @@ class NeuralPointCloud(object):
 
     def write_back_cloud_pos(self, refreshed_cld_pos):
         self._cloud_pos = refreshed_cld_pos
+        self.index.train(torch.tensor(self._cloud_pos, device=self.device))
 
     def write_geo_feats(self, refreshed_geo_feats):
         self.geo_feats = refreshed_geo_feats
