@@ -127,6 +127,7 @@ class Mapper(object):
             3. return the refreshed npc_col_feats
         """
         raw = self.renderer.get_occupancy_from_geo_mapper(p, self.decoders, self.npc, npc_geo_feats, device=self.device)
+        # Here the frustum selection can not been done here by using p[indices], otherwise the gradients back propogation will be error.
         occupancy = torch.sigmoid(coef_sigmoid*raw)
         print("Occupancy is as follows: ", occupancy)
         prune_mask = (occupancy < min_occupancy)
@@ -171,6 +172,9 @@ class Mapper(object):
 
     def prune_points(self, mask, indices, npc_geo_feats, npc_col_feats):
         # Now the tensor dimension can not match the targets'. So need further test.
+        indices = torch.tensor(indices).to(self.device)
+        mask_frustum = torch.tensor([i in indices for i in range(len(mask))]).to(self.device)
+        mask = mask & mask_frustum
         valid_points_mask = ~mask
         self._prune_optimizer(valid_points_mask)
         # refresh the neural point cloud storage and the features storage.
