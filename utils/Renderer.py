@@ -30,10 +30,10 @@ class Renderer(object):
         if device == None:
             device = npc.device()
         ret, _, _ = decoders(p=p, npc=npc, stage='geometry', npc_geo_feats=npc_geo_feats,
-                             npc_col_feats=None, pts_num=0, is_tracker=False, cloud_pos=None, dynamic_r_query=None)
+                             npc_col_feats=None, is_tracker=False, cloud_pos=None, dynamic_r_query=None, with_prune=True)
         # Here we need to notice that we do not need to use dynamic_r_query to get the c_dim, because the p should only contains the actual points. Not the sampling points
         # Now the ret represents the occupancy of the points
-        return ret
+        return ret[:, -1]
 
 
     # This function will call the decoders.

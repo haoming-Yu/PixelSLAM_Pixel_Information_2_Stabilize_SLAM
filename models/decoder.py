@@ -158,7 +158,7 @@ class MLP_geometry(nn.Module):
         else:
             self.actvn = lambda x: F.leaky_relu(x, 0.2)
 
-    def get_feature_at_pos(self, npc, p, npc_feats, is_tracker=False, cloud_pos=None,
+    def get_feature_at_pos(self, npc, p, npc_feats, is_tracker=False, cloud_pos=None, with_prune=False, 
                            dynamic_r_query=None):
         assert torch.is_tensor(
             p), 'point locations for get_feature_at_pos should be tensor.'
@@ -170,7 +170,7 @@ class MLP_geometry(nn.Module):
 
         # faiss returns "D" in the form of squared distances. Thus we compare D to the squared radius
         radius_query_bound = npc.get_radius_query(
-        )**2 if not self.use_dynamic_radius else dynamic_r_query.reshape(-1, 1)**2
+        )**2 if (with_prune or (not self.use_dynamic_radius)) else dynamic_r_query.reshape(-1, 1)**2
         if is_tracker:
             # re-calculate D to propagate gradients to the camera extrinsics
             nn_num = D.shape[1]
@@ -203,7 +203,7 @@ class MLP_geometry(nn.Module):
 
         return c, has_neighbors  # (N_point,c_dim), mask for pts
 
-    def forward(self, p, npc, npc_geo_feats, pts_num=16, is_tracker=False, cloud_pos=None,
+    def forward(self, p, npc, npc_geo_feats, with_prune=False, pts_num=16, is_tracker=False, cloud_pos=None,
                 pts_views_d=None, dynamic_r_query=None):
         """
         forward method of geometric decoder.
@@ -212,6 +212,7 @@ class MLP_geometry(nn.Module):
             p (tensor): sampling locations, N*3
             npc (NerualPointCloud): shared npc object
             npc_geo_feats (tensor): cloned from npc. Contains the optimizable parameters during mapping
+            with_prune (bool): label who are calling. If it is called by the prunning strategy, no need to search for neighbor.
             pts_num (int, optional): sampled pts num along each ray. Defaults to N_surface.
             is_tracker (bool, optional): whether called by tracker. Defaults to False.
             cloud_pos (tensor, optional): point cloud position. 
@@ -225,12 +226,14 @@ class MLP_geometry(nn.Module):
         """
 
         c, has_neighbors = self.get_feature_at_pos(
-            npc, p, npc_geo_feats, is_tracker, cloud_pos, dynamic_r_query=dynamic_r_query)  # get (N,c_dim), e.g. (N,32)
+            npc, p, npc_geo_feats, is_tracker, cloud_pos, with_prune, dynamic_r_query=dynamic_r_query)  # get (N,c_dim), e.g. (N,32)
 
+        valid_ray_mask = None
         # ray is not close to the current npc, choose bar here
         # a ray is considered valid if at least half of all points along the ray have neighbors.
-        valid_ray_mask = ~(
-            torch.sum(has_neighbors.view(-1, pts_num), 1) < int(self.N_surface/2+1))
+        if not with_prune:
+            valid_ray_mask = ~(
+                torch.sum(has_neighbors.view(-1, pts_num), 1) < int(self.N_surface/2+1))
 
         p = p.float().reshape(1, -1, 3)
 
@@ -503,7 +506,7 @@ class POINT(nn.Module):
                                        use_view_direction=use_view_direction)
 
     def forward(self, p, npc, stage, npc_geo_feats, npc_col_feats, pts_num=16, is_tracker=False, cloud_pos=None,
-                pts_views_d=None, dynamic_r_query=None, exposure_feat=None):
+                pts_views_d=None, dynamic_r_query=None, exposure_feat=None, with_prune=False):
         """
             Output occupancy/color and associated masks for validity
 
@@ -528,7 +531,7 @@ class POINT(nn.Module):
         device = f'cuda:{p.get_device()}' 
         match stage:
             case 'geometry':
-                geo_occ, ray_mask, point_mask = self.geo_decoder(p, npc, npc_geo_feats,
+                geo_occ, ray_mask, point_mask = self.geo_decoder(p, npc, npc_geo_feats, with_prune=with_prune,
                                                                  pts_num=pts_num, is_tracker=is_tracker, cloud_pos=cloud_pos,
                                                                  dynamic_r_query=dynamic_r_query)
                 raw = torch.zeros(

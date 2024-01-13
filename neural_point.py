@@ -52,11 +52,18 @@ class NeuralPointCloud(object):
         self._cloud_pos = refreshed_cld_pos
         self.index.train(torch.tensor(self._cloud_pos, device=self.device))
 
+    def refresh_index(self, refreshed_cloud_pos):
+        self.index.reset()
+        self.index.add(refreshed_cloud_pos)
+
     def write_geo_feats(self, refreshed_geo_feats):
-        self.geo_feats = refreshed_geo_feats
+        self.geo_feats = refreshed_geo_feats.detach().clone()
 
     def write_col_feats(self, refreshed_col_feats):
-        self.col_feats = refreshed_col_feats
+        self.col_feats = refreshed_col_feats.detach().clone()
+
+    def refresh_pts_num(self, length):
+        self._pts_num = length
 
     def input_pos(self):
         return self._input_pos
@@ -71,6 +78,9 @@ class NeuralPointCloud(object):
         assert torch.is_tensor(xb), 'use tensor to train FAISS index'
         self.index.train(xb)
         return self.index.is_trained
+
+    def get_index_ntotal(self):
+        return self.index.ntotal
 
     def index_ntotal(self):
         return self.index.ntotal
@@ -131,7 +141,12 @@ class NeuralPointCloud(object):
                 _, _, neighbor_num_gt = self.find_neighbors_faiss(
                     pts_gt, step='add', is_pts_grad=is_pts_grad, dynamic_radius=dynamic_radius)
                 mask = (neighbor_num_gt == 0)
-
+            
+            # _input_pos & _input_rgb are used to do the visualization of the final point cloud
+            # Thus it doesn't affect the training and rerendering process.
+            # To be specific, here the _input_pos and _input_rgb are used to visualize the initial unprojected point cloud. '
+            # (without any point adding strategy, thus the point pruning should also leave this unchanged.)
+            # So for now, the pruning strategy has not been applied to these variables.
             self._input_pos.extend(pts_gt[mask].tolist())
             self._input_rgb.extend(batch_gt_color[mask].tolist())
 
