@@ -174,6 +174,8 @@ class Mapper(object):
         # Now the tensor dimension can not match the targets'. So need further test.
         indices = torch.tensor(indices).to(self.device)
         mask_frustum = torch.tensor([i in indices for i in range(len(mask))]).to(self.device)
+        print(f"mask: {mask}")
+        print(f"mask_frustum: {mask_frustum}")
         mask = mask & mask_frustum
         valid_points_mask = ~mask
         self._prune_optimizer(valid_points_mask)
@@ -909,7 +911,7 @@ class Mapper(object):
                 cal_lpips = LearnedPerceptualImagePatchSimilarity(
                     net_type='alex', normalize=True).to(self.device)
             try:
-                tic = time.perf_counter()
+                tic_tmp = time.perf_counter()
                 while render_idx < self.n_img:
                     _, gt_color, gt_depth, gt_c2w = self.frame_reader[render_idx]
                     cur_c2w = self.estimate_c2w_list[render_idx].to(
@@ -960,11 +962,11 @@ class Mapper(object):
                     render_idx += cfg['mapping']['every_frame']
                     frame_cnt += 1
                     if render_idx % 400 == 0:
+                        print(f'frame {render_idx}')
                         if render_idx != 0:
-                            toc = time.perf_counter()
-                            print(f'frame {render_idx}')
-                            print(f'Rendering these 400 images takes {toc-tic} s')
-                            tic = time.perf_counter()
+                            toc_tmp = time.perf_counter()
+                            print(f'Rendering these 400 images takes {toc_tmp-tic_tmp} s')
+                            tic_tmp = time.perf_counter()
 
                 if self.eval_img:
                     avg_psnr = psnr_sum / frame_cnt
@@ -974,6 +976,7 @@ class Mapper(object):
                     print(f'avg_psnr: {avg_psnr}')
                     print(f'avg_lpips: {avg_lpips}')
                     print(f'total_pruned_number_of_points_in_history: {history_pruned_points_num}')
+                    print(f'total_number_of_points_in_cloud: {self.npc.pts_num()}')
                 print(f'depth_l1_render: {depth_l1_render/frame_cnt}')
 
             except Exception as e:
