@@ -340,6 +340,7 @@ class Mapper(object):
 
         Returns:
             cur_c2w/None (tensor/None): return the updated cur_c2w, return None if no BA
+            Total number of points pruned in this function. (Made for debug)
         """
         H, W, fx, fy, cx, cy = self.H, self.W, self.fx, self.fy, self.cx, self.cy
         npc = self.npc
@@ -347,6 +348,7 @@ class Mapper(object):
         device = self.device
         init = True if idx == 0 else False
         bottom = torch.tensor([0, 0, 0, 1.0], device=self.device).reshape(1, 4)
+        number_pruned = 0
 
         if len(keyframe_dict) == 0:
             optimize_frame = []
@@ -700,13 +702,12 @@ class Mapper(object):
         print("Now Start pruning")
         # We should do the pruning after the features have been written back.
         # Now do the pruning
-        _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.2)
+        _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.05)
         self.npc_geo_feats = npc_geo_feats
         self.npc_col_feats = npc_col_feats
+        number_pruned = number_pruned + _
         print(f'{_} locations pruned out.')
         print(f'Current point number: {len(self.npc.cloud_pos())}')
-        print(f'Current geometric features number: {self.npc.get_geo_feats().shape}')
-        print(f'Current color features number: {self.npc.get_col_feats().shape}')
         # Now do the retraining to get a cleaner representation.
 
         if self.BA:
@@ -732,9 +733,9 @@ class Mapper(object):
                        f'{self.output}/ckpts/color_decoder/{idx:05}.pt')
 
         if self.BA:
-            return cur_c2w
+            return cur_c2w, number_pruned
         else:
-            return None
+            return number_pruned
 
     def run(self, time_string):
         cfg = self.cfg
@@ -751,6 +752,7 @@ class Mapper(object):
         self.estimate_c2w_list[0] = gt_c2w.cpu()
         init = True
         self.prev_c2w = self.estimate_c2w_list[0]
+        history_pruned_points_num = 0
         while (1):
             if not init:
                 if self.lazy_start:
@@ -824,8 +826,11 @@ class Mapper(object):
                 _ = self.optimize_map(num_joint_iters, idx, gt_color, gt_depth, gt_c2w,
                                       self.keyframe_dict, self.keyframe_list, cur_c2w, color_refine=color_refine)
                 if self.BA:
-                    cur_c2w = _
+                    cur_c2w, num_pruned = _
                     self.estimate_c2w_list[idx] = cur_c2w
+                    history_pruned_points_num = history_pruned_points_num + num_pruned
+                else:
+                    history_pruned_points_num = history_pruned_points_num + _
 
             if (idx % self.keyframe_every == 0 or (idx == self.n_img-2)) and (idx not in self.keyframe_list) and (not torch.isinf(gt_c2w).any()) and (not torch.isnan(gt_c2w).any()):
                 self.keyframe_list.append(idx)
@@ -904,6 +909,7 @@ class Mapper(object):
                 cal_lpips = LearnedPerceptualImagePatchSimilarity(
                     net_type='alex', normalize=True).to(self.device)
             try:
+                tic = time.perf_counter()
                 while render_idx < self.n_img:
                     _, gt_color, gt_depth, gt_c2w = self.frame_reader[render_idx]
                     cur_c2w = self.estimate_c2w_list[render_idx].to(
@@ -954,7 +960,11 @@ class Mapper(object):
                     render_idx += cfg['mapping']['every_frame']
                     frame_cnt += 1
                     if render_idx % 400 == 0:
-                        print(f'frame {render_idx}')
+                        if render_idx != 0:
+                            toc = time.perf_counter()
+                            print(f'frame {render_idx}')
+                            print(f'Rendering these 400 images takes {toc-tic} s')
+                            tic = time.perf_counter()
 
                 if self.eval_img:
                     avg_psnr = psnr_sum / frame_cnt
@@ -963,6 +973,7 @@ class Mapper(object):
                     print(f'avg_ms_ssim: {avg_ssim}')
                     print(f'avg_psnr: {avg_psnr}')
                     print(f'avg_lpips: {avg_lpips}')
+                    print(f'total_pruned_number_of_points_in_history: {history_pruned_points_num}')
                 print(f'depth_l1_render: {depth_l1_render/frame_cnt}')
 
             except Exception as e:
