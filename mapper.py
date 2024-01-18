@@ -89,6 +89,7 @@ class Mapper(object):
         self.crop_edge = 0 if cfg['cam']['crop_edge'] is None else cfg['cam']['crop_edge']
         self.save_rendered_image = cfg['mapping']['save_rendered_image']
         self.min_iter_ratio = cfg['mapping']['min_iter_ratio']
+        self.after_prune_iter_ratio = cfg['mapping']['after_prune_iter_ratio']
         self.lazy_start = cfg['mapping']['lazy_start']
 
         if self.save_selected_keyframes_info:
@@ -171,11 +172,13 @@ class Mapper(object):
             f'Successfully refreshed neural point cloud, {npc.get_index_ntotal()} points in total.')
 
     def prune_points(self, mask, indices, npc_geo_feats, npc_col_feats):
-        # Now the tensor dimension can not match the targets'. So need further test.
-        indices = torch.tensor(indices).to(self.device)
-        mask_frustum = torch.tensor([i in indices for i in range(len(mask))]).to(self.device)
-        print(f"mask: {mask}")
-        print(f"mask_frustum: {mask_frustum}")
+        if indices is not None:
+            indices = torch.tensor(indices).to(self.device)
+            mask_frustum = torch.tensor([i in indices for i in range(len(mask))]).to(self.device)
+        else:
+            mask_frustum = torch.tensor([False for i in range(len(mask))]).to(self.device)
+        print(f"mask length: {len(mask)}")
+        print(f"mask_frustum length: {len(mask_frustum)}")
         mask = mask & mask_frustum
         valid_points_mask = ~mask
         self._prune_optimizer(valid_points_mask)
@@ -502,9 +505,11 @@ class Mapper(object):
         if idx > 0 and not color_refine:
             num_joint_iters = np.clip(int(num_joint_iters*frame_pts_add/300), int(
                 self.min_iter_ratio*num_joint_iters), 2*num_joint_iters)
-
         # Here should be a changing point.
         # If we need to add a pruning strategy, we should add it here.
+
+        # Use clip to make sure that the index will always stay in this range.
+        idx_iter_pruning = np.clip(int(num_joint_iters * (1 - after_prune_iter_ratio)), 0, num_joint_iters-1)
         for joint_iter in range(num_joint_iters):
             tic = time.perf_counter()
             if self.frustum_feature_selection:
@@ -680,6 +685,8 @@ class Mapper(object):
             if joint_iter == num_joint_iters-1:
                 print('idx: ', idx.item(), ', time', f'{toc - tic:0.6f}', ', geo_loss_pixel: ', f'{(geo_loss.item()/depth_mask.sum().item()):0.6f}',
                       ', color_loss_pixel: ', f'{(color_loss.item()/depth_mask.sum().item()):0.4f}')
+            # New change: should add the pruning here, and just keep going the iteration after pruning.
+            # May have some problem in gradients passing...
 
         # When the mapping is stable, we should do the pruning. And after the pruning, we should do the mapping again to make the representation more rubost.
         # Considering whether to do the point-adding strategy of Gaussian during mapping.
@@ -711,7 +718,6 @@ class Mapper(object):
         print(f'{_} locations pruned out.')
         print(f'Current point number: {len(self.npc.cloud_pos())}')
         # Now do the retraining to get a cleaner representation.
-
         if self.BA:
             # put the updated camera poses back
             camera_tensor_id = 0
