@@ -130,7 +130,7 @@ class Mapper(object):
         raw = self.renderer.get_occupancy_from_geo_mapper(p, self.decoders, self.npc, npc_geo_feats, device=self.device)
         # Here the frustum selection can not been done here by using p[indices], otherwise the gradients back propogation will be error.
         occupancy = torch.sigmoid(coef_sigmoid*raw)
-        print("Occupancy is as follows: ", occupancy)
+        # print("Occupancy is as follows: ", occupancy)
         prune_mask = (occupancy < min_occupancy)
         pruned_num, geo_features, col_features = self.prune_points(prune_mask, indices, npc_geo_feats, npc_col_feats)
         return pruned_num, geo_features, col_features # Needs to add other things.
@@ -167,9 +167,8 @@ class Mapper(object):
         # index.reset()
         # index.add(cloud_pos)
         npc.refresh_index(cloud_pos)
-
-        print(
-            f'Successfully refreshed neural point cloud, {npc.get_index_ntotal()} points in total.')
+        # print(
+        #     f'Successfully refreshed neural point cloud, {npc.index_ntotal()} points in total.')
 
     def prune_points(self, mask, indices, npc_geo_feats, npc_col_feats):
         if indices is not None:
@@ -177,8 +176,8 @@ class Mapper(object):
             mask_frustum = torch.tensor([i in indices for i in range(len(mask))]).to(self.device)
         else:
             mask_frustum = torch.tensor([False for i in range(len(mask))]).to(self.device)
-        print(f"mask length: {len(mask)}")
-        print(f"mask_frustum length: {len(mask_frustum)}")
+        # print(f"mask length: {len(mask)}")
+        # print(f"mask_frustum length: {len(mask_frustum)}")
         mask = mask & mask_frustum
         valid_points_mask = ~mask
         self._prune_optimizer(valid_points_mask)
@@ -509,7 +508,7 @@ class Mapper(object):
         # If we need to add a pruning strategy, we should add it here.
 
         # Use clip to make sure that the index will always stay in this range.
-        idx_iter_pruning = np.clip(int(num_joint_iters * (1 - after_prune_iter_ratio)), 0, num_joint_iters-1)
+        idx_iter_pruning = np.clip(int(num_joint_iters * (1 - self.after_prune_iter_ratio)), 0, num_joint_iters-1)
         for joint_iter in range(num_joint_iters):
             tic = time.perf_counter()
             if self.frustum_feature_selection:
@@ -683,10 +682,27 @@ class Mapper(object):
                             ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
 
             if joint_iter == num_joint_iters-1:
+                print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
+                      ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
                 print('idx: ', idx.item(), ', time', f'{toc - tic:0.6f}', ', geo_loss_pixel: ', f'{(geo_loss.item()/depth_mask.sum().item()):0.6f}',
                       ', color_loss_pixel: ', f'{(color_loss.item()/depth_mask.sum().item()):0.4f}')
             # New change: should add the pruning here, and just keep going the iteration after pruning.
             # May have some problem in gradients passing...
+            if joint_iter == idx_iter_pruning:
+                print(f'We are at {idx_iter_pruning} iteration, Now Start pruning')
+                _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.05)
+                self.npc_geo_feats = npc_geo_feats
+                self.npc_col_feats = npc_col_feats
+                number_pruned = number_pruned + _
+                print(f'{_} locations pruned out.')
+                print(f'Current point number: {len(self.npc.cloud_pos())}')
+                indices = self.get_mask_from_c2w(mask_c2w, gt_depth_np)
+                masked_c_grad['indices'] = indices
+                masked_c_grad['geo_pcl_grad'] = npc_geo_feats[indices].detach().clone().requires_grad_(True)
+                masked_c_grad['color_pcl_grad'] = npc_col_feats[indices].detach().clone().requires_grad_(True)
+                print("Pruning Finished")
+                print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
+                      ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
 
         # When the mapping is stable, we should do the pruning. And after the pruning, we should do the mapping again to make the representation more rubost.
         # Considering whether to do the point-adding strategy of Gaussian during mapping.
@@ -708,16 +724,17 @@ class Mapper(object):
         self.npc_col_feats = npc_col_feats
         print('Mapper has updated point features.')
 
-        print("Now Start pruning")
-        # We should do the pruning after the features have been written back.
-        # Now do the pruning
-        _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.05)
-        self.npc_geo_feats = npc_geo_feats
-        self.npc_col_feats = npc_col_feats
-        number_pruned = number_pruned + _
-        print(f'{_} locations pruned out.')
-        print(f'Current point number: {len(self.npc.cloud_pos())}')
+        # print("Now Start pruning")
+        # # We should do the pruning after the features have been written back.
+        # # Now do the pruning
+        # _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.05)
+        # self.npc_geo_feats = npc_geo_feats
+        # self.npc_col_feats = npc_col_feats
+        # number_pruned = number_pruned + _
+        # print(f'{_} locations pruned out.')
+        # print(f'Current point number: {len(self.npc.cloud_pos())}')
         # Now do the retraining to get a cleaner representation.
+
         if self.BA:
             # put the updated camera poses back
             camera_tensor_id = 0

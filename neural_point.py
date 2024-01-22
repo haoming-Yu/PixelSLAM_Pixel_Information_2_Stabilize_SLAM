@@ -79,8 +79,8 @@ class NeuralPointCloud(object):
         self.index.train(xb)
         return self.index.is_trained
 
-    def get_index_ntotal(self):
-        return self.index.ntotal
+    def get_index(self):
+        return self.index
 
     def index_ntotal(self):
         return self.index.ntotal

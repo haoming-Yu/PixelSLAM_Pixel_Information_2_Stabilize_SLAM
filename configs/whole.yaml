@@ -62,7 +62,7 @@ mapping:
   iters: 400 # how many iterations of optimizer per mapping stage
   save_rendered_image: True # if True, saves the rgb image also in a separate folder compared to the standard visualization
   min_iter_ratio: 0.95 # mapping iteration lower bound parameter. See supplementary material
-  after_prune_iter_ratio: 0.05
+  after_prune_iter_ratio: 0.2
   init:
     geometry:
       decoders_lr: 0.001
