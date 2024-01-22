@@ -689,6 +689,8 @@ class Mapper(object):
             # New change: should add the pruning here, and just keep going the iteration after pruning.
             # May have some problem in gradients passing...
             if joint_iter == idx_iter_pruning:
+                print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
+                      ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
                 print(f'We are at {idx_iter_pruning} iteration, Now Start pruning')
                 _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.05)
                 self.npc_geo_feats = npc_geo_feats
@@ -701,6 +703,7 @@ class Mapper(object):
                 masked_c_grad['geo_pcl_grad'] = npc_geo_feats[indices].detach().clone().requires_grad_(True)
                 masked_c_grad['color_pcl_grad'] = npc_col_feats[indices].detach().clone().requires_grad_(True)
                 print("Pruning Finished")
+            if joint_iter == idx_iter_pruning + 1:
                 print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
                       ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
 
