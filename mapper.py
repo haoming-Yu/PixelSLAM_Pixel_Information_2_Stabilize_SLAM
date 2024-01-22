@@ -698,10 +698,14 @@ class Mapper(object):
                 number_pruned = number_pruned + _
                 print(f'{_} locations pruned out.')
                 print(f'Current point number: {len(self.npc.cloud_pos())}')
-                indices = self.get_mask_from_c2w(mask_c2w, gt_depth_np)
-                masked_c_grad['indices'] = indices
-                masked_c_grad['geo_pcl_grad'] = npc_geo_feats[indices].detach().clone().requires_grad_(True)
-                masked_c_grad['color_pcl_grad'] = npc_col_feats[indices].detach().clone().requires_grad_(True)
+                if self.frustum_feature_selection:
+                    indices = self.get_mask_from_c2w(mask_c2w, gt_depth_np)
+                    masked_c_grad['indices'] = indices
+                    masked_c_grad['geo_pcl_grad'] = npc_geo_feats[indices].detach().clone().requires_grad_(True)
+                    masked_c_grad['color_pcl_grad'] = npc_col_feats[indices].detach().clone().requires_grad_(True)
+                else:
+                    masked_c_grad['geo_pcl_grad'] = npc_geo_feats.detach().clone().requires_grad_(True)
+                    masked_c_grad['color_pcl_grad'] = npc_col_feats.detach().clone().requires_grad_(True)
                 print("Pruning Finished")
             if joint_iter == idx_iter_pruning + 1:
                 print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
