@@ -11,7 +11,7 @@ class NeuralPointCloud(object):
         self.cfg = cfg
         self.c_dim = cfg['model']['c_dim']
         self.device = cfg['mapping']['device']
-        self.cuda_id = 0
+        self.cuda_id = cfg['pointcloud']['device']
         self.use_dynamic_radius = cfg['use_dynamic_radius']
         self.nn_num = cfg['pointcloud']['nn_num']
 
@@ -35,11 +35,13 @@ class NeuralPointCloud(object):
         self.keyframe_dict = []
 
         self.resource = faiss.StandardGpuResources()
+        faiss.IndexIVFFlat(faiss.IndexFlatL2(3), 3, self.nlist, faiss.METRIC_L2)
         self.index = faiss.index_cpu_to_gpu(self.resource,
                                             self.cuda_id,
                                             faiss.IndexIVFFlat(faiss.IndexFlatL2(3), 3, self.nlist, faiss.METRIC_L2))
         self.index.nprobe = cfg['pointcloud']['nprobe']
         setup_seed(cfg["setup_seed"])
+        print("NeuralPointCloud Initiated.")
 
     def cloud_pos(self, index=None):
         if index is None:

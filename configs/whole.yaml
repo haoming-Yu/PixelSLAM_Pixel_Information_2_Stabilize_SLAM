@@ -63,6 +63,16 @@ mapping:
   save_rendered_image: True # if True, saves the rgb image also in a separate folder compared to the standard visualization
   min_iter_ratio: 0.95 # mapping iteration lower bound parameter. See supplementary material
   after_prune_iter_ratio: 0.2
+  img_encoder: 
+    backbone: "resnet34"
+    pretrained: True
+    num_layers: 4
+    index_interp: "bilinear"
+    index_padding: "border"
+    upsample_interp: "bilinear"
+    feature_scale: 1.0
+    use_first_pool: True
+    norm_type: "batch"
   init:
     geometry:
       decoders_lr: 0.001
@@ -103,6 +113,7 @@ meshing:
   eval_rec: True # if True, evaluates the F-score and depth L1 metrics of the mesh
   mesh_freq: -1 # meshing frame frequency for visualization
 pointcloud:
+  device: "cuda:0"
   nn_num: 8 # how many nn to choose at most within search radius
   min_nn_num: 2 # if nn_num less than this, will skip this sample location
   N_add: 3 # how many point to add at one location (front and behind gt_depth)

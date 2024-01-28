@@ -1,8 +1,256 @@
 import math
 import torch
+import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
+import torch.autograd.profiler as profiler
+import util
+
+class ConvEncoder(nn.Module):
+    """
+    Basic, extremely simple convolutional encoder
+    """
+
+    def __init__(
+        self,
+        dim_in=3,
+        norm_layer=util.get_norm_layer("group"),
+        padding_type="reflect",
+        use_leaky_relu=True,
+        use_skip_conn=True,
+    ):
+        super().__init__()
+        self.dim_in = dim_in
+        self.norm_layer = norm_layer
+        self.activation = nn.LeakyReLU() if use_leaky_relu else nn.ReLU()
+        self.padding_type = padding_type
+        self.use_skip_conn = use_skip_conn
+
+        # TODO: make these configurable
+        first_layer_chnls = 64
+        mid_layer_chnls = 128
+        last_layer_chnls = 128
+        n_down_layers = 3
+        self.n_down_layers = n_down_layers
+
+        self.conv_in = nn.Sequential(
+            nn.Conv2d(dim_in, first_layer_chnls, kernel_size=7, stride=2, bias=False),
+            norm_layer(first_layer_chnls),
+            self.activation,
+        )
+
+        chnls = first_layer_chnls
+        for i in range(0, n_down_layers):
+            conv = nn.Sequential(
+                nn.Conv2d(chnls, 2 * chnls, kernel_size=3, stride=2, bias=False),
+                norm_layer(2 * chnls),
+                self.activation,
+            )
+            setattr(self, "conv" + str(i), conv)
+
+            deconv = nn.Sequential(
+                nn.ConvTranspose2d(
+                    4 * chnls, chnls, kernel_size=3, stride=2, bias=False
+                ),
+                norm_layer(chnls),
+                self.activation,
+            )
+            setattr(self, "deconv" + str(i), deconv)
+            chnls *= 2
+
+        self.conv_mid = nn.Sequential(
+            nn.Conv2d(chnls, mid_layer_chnls, kernel_size=4, stride=4, bias=False),
+            norm_layer(mid_layer_chnls),
+            self.activation,
+        )
+
+        self.deconv_last = nn.ConvTranspose2d(
+            first_layer_chnls, last_layer_chnls, kernel_size=3, stride=2, bias=True
+        )
+
+        self.dims = [last_layer_chnls]
+
+    def forward(self, x):
+        x = util.same_pad_conv2d(x, padding_type=self.padding_type, layer=self.conv_in)
+        x = self.conv_in(x)
+
+        inters = []
+        for i in range(0, self.n_down_layers):
+            conv_i = getattr(self, "conv" + str(i))
+            x = util.same_pad_conv2d(x, padding_type=self.padding_type, layer=conv_i)
+            x = conv_i(x)
+            inters.append(x)
+
+        x = util.same_pad_conv2d(x, padding_type=self.padding_type, layer=self.conv_mid)
+        x = self.conv_mid(x)
+        x = x.reshape(x.shape[0], -1, 1, 1).expand(-1, -1, *inters[-1].shape[-2:])
+
+        for i in reversed(range(0, self.n_down_layers)):
+            if self.use_skip_conn:
+                x = torch.cat((x, inters[i]), dim=1)
+            deconv_i = getattr(self, "deconv" + str(i))
+            x = deconv_i(x)
+            x = util.same_unpad_deconv2d(x, layer=deconv_i)
+        x = self.deconv_last(x)
+        x = util.same_unpad_deconv2d(x, layer=self.deconv_last)
+        return x
+
+# This class is referenced from pixelNeRF implementation
+# In the original implementation, the feature extracted from image is directly 
+# concatenated to the xyz coordinate to feed the MLP.
+class SpatialEncoder(nn.Module):
+    """
+    2D (Spatial/Pixel-aligned/local) image encoder
+    """
+
+    def __init__(
+        self,
+        backbone="resnet34",
+        pretrained=True,
+        num_layers=4,
+        index_interp="bilinear",
+        index_padding="border",
+        upsample_interp="bilinear",
+        feature_scale=1.0,
+        use_first_pool=True,
+        norm_type="batch",
+    ):
+        """
+        :param backbone Backbone network. Either custom, in which case
+        model.custom_encoder.ConvEncoder is used OR resnet18/resnet34, in which case the relevant
+        model from torchvision is used
+        :param num_layers number of resnet layers to use, 1-5
+        :param pretrained Whether to use model weights pretrained on ImageNet
+        :param index_interp Interpolation to use for indexing
+        :param index_padding Padding mode to use for indexing, border | zeros | reflection
+        :param upsample_interp Interpolation to use for upscaling latent code
+        :param feature_scale factor to scale all latent by. Useful (<1) if image
+        is extremely large, to fit in memory.
+        :param use_first_pool if false, skips first maxpool layer to avoid downscaling image
+        features too much (ResNet only)
+        :param norm_type norm type to applied; pretrained model must use batch
+        """
+        super().__init__()
+
+        if norm_type != "batch":
+            assert not pretrained
+
+        self.use_custom_resnet = backbone == "custom"
+        self.feature_scale = feature_scale
+        self.use_first_pool = use_first_pool
+        norm_layer = util.get_norm_layer(norm_type)
+
+        if self.use_custom_resnet:
+            print("WARNING: Custom encoder is experimental only")
+            print("Using simple convolutional encoder")
+            self.model = ConvEncoder(3, norm_layer=norm_layer)
+            self.latent_size = self.model.dims[-1]
+        else:
+            print("Using torchvision", backbone, "encoder")
+            self.model = getattr(torchvision.models, backbone)(
+                weights='ResNet34_Weights.DEFAULT', norm_layer=norm_layer
+            )
+            # Following 2 lines need to be uncommented for older configs
+            self.model.fc = nn.Sequential()
+            self.model.avgpool = nn.Sequential()
+            self.latent_size = [0, 64, 128, 256, 512, 1024, 1024, 1024, 1024][num_layers]
+
+        self.num_layers = num_layers
+        self.index_interp = index_interp
+        self.index_padding = index_padding
+        self.upsample_interp = upsample_interp
+        self.register_buffer("latent", torch.empty(1, 1, 1, 1), persistent=False)
+        self.register_buffer(
+            "latent_scaling", torch.empty(2, dtype=torch.float32), persistent=False
+        )
+        # self.latent (B, L, H, W)
+
+    def index(self, uv, cam_z=None, image_size=(), z_bounds=None):
+        """
+        Get pixel-aligned image features at 2D image coordinates
+        :param uv (B, N, 2) image points (x,y)
+        :param cam_z ignored (for compatibility)
+        :param image_size image size, either (width, height) or single int.
+        if not specified, assumes coords are in [-1, 1]
+        :param z_bounds ignored (for compatibility)
+        :return (B, L, N) L is latent size
+        """
+        with profiler.record_function("encoder_index"):
+            if uv.shape[0] == 1 and self.latent.shape[0] > 1:
+                uv = uv.expand(self.latent.shape[0], -1, -1)
+
+            with profiler.record_function("encoder_index_pre"):
+                if len(image_size) > 0:
+                    if len(image_size) == 1:
+                        image_size = (image_size, image_size)
+                    scale = self.latent_scaling / image_size
+                    uv = uv * scale - 1.0
+
+            uv = uv.unsqueeze(2)  # (B, N, 1, 2)
+            samples = F.grid_sample(
+                self.latent,
+                uv,
+                align_corners=True,
+                mode=self.index_interp,
+                padding_mode=self.index_padding,
+            )
+            return samples[:, :, :, 0]  # (B, C, N)
+
+    def forward(self, x):
+        """
+        For extracting ResNet's features.
+        :param x image (B, C, H, W)
+        :return latent (B, latent_size, H, W)
+        """
+        if self.feature_scale != 1.0:
+            x = F.interpolate(
+                x,
+                scale_factor=self.feature_scale,
+                mode="bilinear" if self.feature_scale > 1.0 else "area",
+                align_corners=True if self.feature_scale > 1.0 else None,
+                recompute_scale_factor=True,
+            )
+        x = x.to(device=self.latent.device)
+
+        if self.use_custom_resnet:
+            self.latent = self.model(x)
+        else:
+            x = self.model.conv1(x)
+            x = self.model.bn1(x)
+            x = self.model.relu(x)
+
+            latents = [x]
+            if self.num_layers > 1:
+                if self.use_first_pool:
+                    x = self.model.maxpool(x)
+                x = self.model.layer1(x)
+                latents.append(x)
+            if self.num_layers > 2:
+                x = self.model.layer2(x)
+                latents.append(x)
+            if self.num_layers > 3:
+                x = self.model.layer3(x)
+                latents.append(x)
+            if self.num_layers > 4:
+                x = self.model.layer4(x)
+                latents.append(x)
+
+            self.latents = latents
+            align_corners = None if self.index_interp == "nearest " else True
+            latent_sz = latents[0].shape[-2:]
+            for i in range(len(latents)):
+                latents[i] = F.interpolate(
+                    latents[i],
+                    latent_sz,
+                    mode=self.upsample_interp,
+                    align_corners=align_corners,
+                )
+            self.latent = torch.cat(latents, dim=1)
+        self.latent_scaling[0] = self.latent.shape[-1]
+        self.latent_scaling[1] = self.latent.shape[-2]
+        self.latent_scaling = self.latent_scaling / (self.latent_scaling - 1) * 2.0
+        return self.latent
 
 """
 This module is not modified for now. 
@@ -131,10 +379,26 @@ class MLP_geometry(nn.Module):
         self.use_dynamic_radius = cfg['use_dynamic_radius']
         self.min_nn_num = cfg['pointcloud']['min_nn_num']
         self.N_surface = cfg['rendering']['N_surface']
+        self.img_encoder = SpatialEncoder(
+            backbone=cfg['mapping']['img_encoder']['backbone'],
+            pretrained=cfg['mapping']['img_encoder']['pretrained'],
+            num_layers=cfg['mapping']['img_encoder']['num_layers'],
+            index_interp=cfg['mapping']['img_encoder']['index_interp'],
+            index_padding=cfg['mapping']['img_encoder']['index_padding'],
+            upsample_interp=cfg['mapping']['img_encoder']['upsample_interp'],
+            feature_scale=cfg['mapping']['img_encoder']['feature_scale'],
+            use_first_pool=cfg['mapping']['img_encoder']['use_first_pool'],
+            norm_type=cfg['mapping']['img_encoder']['norm_type']
+        )
 
         if self.c_dim != 0:
             self.fc_c = nn.ModuleList([
                 nn.Linear(self.c_dim, hidden_size) for i in range(n_blocks)
+            ])
+        
+        if self.img_encoder.latent_size != 0:
+            self.fc_img_feature = nn.ModuleList([
+                nn.Linear(self.img_encoder.latent_size, hidden_size) for i in range(n_blocks)
             ])
 
         if pos_embedding_method == 'fourier':
@@ -157,6 +421,39 @@ class MLP_geometry(nn.Module):
             self.actvn = torch.nn.Softplus(beta=100)
         else:
             self.actvn = lambda x: F.leaky_relu(x, 0.2)
+
+    def get_img_feature_at_pos(self, p, cur_c2w, fx, fy, cx, cy, cur_RGB):
+        """
+        cur_RGB should have the shape of (H, W), and only one picture is used here for now.
+        """
+        vertices = p.reshape(-1, 3).cpu().numpy()
+        c2w = cur_c2w.cpu().numpy()
+        w2c = np.linalg.inv(c2w)
+        ones = np.ones_like(vertices[:, 0]).reshape(-1, 1)
+        homo_vertices = np.concatenate(
+            [vertices, ones], axis=1).reshape(-1, 4, 1)
+        cam_cord_homo = w2c @ homo_vertices
+        cam_cord = cam_cord_homo[:, :3]
+        K = np.array([
+            [fx, .0, cx],
+            [.0, fy, cy],
+            [.0, .0, 1.0]
+        ]).reshape(3, 3)
+        cam_cord[:, 0] *= -1
+        uv = K @ cam_cord 
+        z = uv[:, -1:] + 1e-5
+        uv = uv[:, :2] / z
+        uv = uv.astype(np.float32) # for now uv means pixel coordinate.
+        uv = uv.reshape(1, uv.shape[0], uv.shape[1])
+
+        W = cur_RGB.shape[0]
+        H = cur_RGB.shape[1]
+        cur_RGB = cur_RGB.reshape(1, 3, cur_RGB.shape[0], cur_RGB.shape[1])
+        self.img_encoder(cur_RGB)
+        latent = self.img_encoder.index(uv, image_size=(W, H)) # Now the size of latent should be (1, L, N_points)
+        latent = latent.transpose(1, 2).reshape(-1, self.img_encoder.latent_size) # (N_points, L)
+
+        return latent
 
     def get_feature_at_pos(self, npc, p, npc_feats, is_tracker=False, cloud_pos=None, with_prune=False, 
                            dynamic_r_query=None):
@@ -203,7 +500,7 @@ class MLP_geometry(nn.Module):
 
         return c, has_neighbors  # (N_point,c_dim), mask for pts
 
-    def forward(self, p, npc, npc_geo_feats, with_prune=False, pts_num=16, is_tracker=False, cloud_pos=None,
+    def forward(self, p, npc, npc_geo_feats, cur_c2w, fx, fy, cx, cy, cur_RGB, with_prune=False, pts_num=16, is_tracker=False, cloud_pos=None,
                 pts_views_d=None, dynamic_r_query=None):
         """
         forward method of geometric decoder.
@@ -228,6 +525,10 @@ class MLP_geometry(nn.Module):
         c, has_neighbors = self.get_feature_at_pos(
             npc, p, npc_geo_feats, is_tracker, cloud_pos, with_prune, dynamic_r_query=dynamic_r_query)  # get (N,c_dim), e.g. (N,32)
 
+        img_feature = self.get_img_feature_at_pos(
+            p, cur_c2w, fx, fy, cx, cy, cur_RGB
+        ) # The size of img_feature should be latent size.
+
         valid_ray_mask = None
         # ray is not close to the current npc, choose bar here
         # a ray is considered valid if at least half of all points along the ray have neighbors.
@@ -247,6 +548,7 @@ class MLP_geometry(nn.Module):
             if self.c_dim != 0:
                 # hidden dim + (feature dim->hidden dim) -> hidden dim
                 h = h + self.fc_c[i](c)
+                h = h + self.fc_img_feature[i](img_feature)
                 # so for hidden layers in the decoder, its input comes from both its feature and embedded location.
             if i in self.skips:
                 h = torch.cat([embedded_input, h], -1)
@@ -506,7 +808,7 @@ class POINT(nn.Module):
                                        use_view_direction=use_view_direction)
 
     def forward(self, p, npc, stage, npc_geo_feats, npc_col_feats, pts_num=16, is_tracker=False, cloud_pos=None,
-                pts_views_d=None, dynamic_r_query=None, exposure_feat=None, with_prune=False):
+                pts_views_d=None, dynamic_r_query=None, exposure_feat=None, with_prune=False, cur_c2w=None, fx=None, fy=None, cx=None, cy=None, cur_RGB=None):
         """
             Output occupancy/color and associated masks for validity
 
@@ -533,7 +835,7 @@ class POINT(nn.Module):
             case 'geometry':
                 geo_occ, ray_mask, point_mask = self.geo_decoder(p, npc, npc_geo_feats, with_prune=with_prune,
                                                                  pts_num=pts_num, is_tracker=is_tracker, cloud_pos=cloud_pos,
-                                                                 dynamic_r_query=dynamic_r_query)
+                                                                 dynamic_r_query=dynamic_r_query, cur_c2w=cur_c2w, fx=fx, fy=fy, cx=cx, cy=cy, cur_RGB=cur_RGB)
                 raw = torch.zeros(
                     geo_occ.shape[0], 4, device=device, dtype=torch.float)
                 raw[..., -1] = geo_occ

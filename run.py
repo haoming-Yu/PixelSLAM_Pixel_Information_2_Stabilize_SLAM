@@ -38,7 +38,8 @@ def main():
     now = datetime.now()
     time_string = now.strftime("%Y%m%d_%H%M%S") if args.stop is None else None
 
-    slam = Point_SLAM(cfg, args, time_string=time_string)
+    print("Point SLAM creation started")
+    slam = Point_SLAM(cfg, args, time_string=time_string, share_npc=False)
 
     slam.run()
 

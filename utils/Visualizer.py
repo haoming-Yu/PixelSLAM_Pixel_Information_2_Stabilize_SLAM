@@ -55,7 +55,7 @@ class Visualizer(object):
                     c2w,
                     self.device,
                     stage='color',
-                    gt_depth=gt_depth, npc_geo_feats=npc_geo_feats,
+                    gt_depth=gt_depth, gt_color=gt_color, npc_geo_feats=npc_geo_feats,
                     npc_col_feats=npc_col_feats,
                     dynamic_r_query=dynamic_r_query, cloud_pos=cloud_pos,
                     exposure_feat=exposure_feat)
@@ -112,7 +112,7 @@ class Visualizer(object):
                     c2w,
                     self.device,
                     stage='color',
-                    gt_depth=gt_depth, npc_geo_feats=npc_geo_feats,
+                    gt_depth=gt_depth, gt_color=gt_color, npc_geo_feats=npc_geo_feats,
                     npc_col_feats=npc_col_feats,
                     dynamic_r_query=dynamic_r_query, cloud_pos=cloud_pos,
                     exposure_feat=exposure_feat)

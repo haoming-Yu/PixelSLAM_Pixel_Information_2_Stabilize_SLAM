@@ -79,6 +79,7 @@ class Tracker(object):
                                      renderer=self.renderer, verbose=self.verbose, device=self.device,
                                      vis_inside=cfg['tracking']['vis_inside'], total_iters=self.num_cam_iters)
         self.H, self.W, self.fx, self.fy, self.cx, self.cy = slam.H, slam.W, slam.fx, slam.fy, slam.cx, slam.cy
+        print("Tracker initiated.")
 
     def set_pipe(self, pipe):
         self.pipe = pipe
@@ -108,6 +109,7 @@ class Tracker(object):
         c2w = get_camera_from_tensor(camera_tensor)
         Wedge = self.ignore_edge_W
         Hedge = self.ignore_edge_H
+        cur_RGB = gt_color.detach().clone()
 
         if self.sample_with_color_grad:
             sample_size = batch_size
@@ -151,7 +153,7 @@ class Tracker(object):
                                              npc_col_feats=self.npc_col_feats,
                                              is_tracker=True, cloud_pos=self.cloud_pos,
                                              dynamic_r_query=batch_r_query,
-                                             exposure_feat=self.exposure_feat)
+                                             exposure_feat=self.exposure_feat, cur_c2w=c2w, fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy, cur_RGB=cur_RGB)
         depth, uncertainty, color, _ = ret
 
         uncertainty = uncertainty.detach()

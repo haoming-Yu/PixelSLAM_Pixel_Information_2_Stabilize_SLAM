@@ -20,8 +20,8 @@ class Renderer(object):
 
         self.H, self.W, self.fx, self.fy, self.cx, self.cy = slam.H, slam.W, slam.fx, slam.fy, slam.cx, slam.cy
 
-    # This function is a wrapper of the eval_points to provide simpler interface for occupancy getting
-    def get_occupancy_from_geo_mapper(self, p, decoders, npc, npc_geo_feats=None, device=None):
+    # This function will call decoders.
+    def get_occupancy_from_geo_mapper(self, p, decoders, npc, npc_geo_feats=None, device=None, cur_c2w=None, fx=None, fy=None, cx=None, cy=None, cur_RGB=None):
         """
         Get the corresponding point occupancy. Note that the geometry occupancy should have nothing to do with the camera pose to get a consistent model
 
@@ -30,7 +30,7 @@ class Renderer(object):
         if device == None:
             device = npc.device()
         ret, _, _ = decoders(p=p, npc=npc, stage='geometry', npc_geo_feats=npc_geo_feats,
-                             npc_col_feats=None, is_tracker=False, cloud_pos=None, dynamic_r_query=None, with_prune=True)
+                             npc_col_feats=None, is_tracker=False, cloud_pos=None, dynamic_r_query=None, with_prune=True, cur_c2w=cur_c2w, fx=fx, fy=fy, cx=cx, cy=cy, cur_RGB=cur_RGB)
         # Here we need to notice that we do not need to use dynamic_r_query to get the c_dim, because the p should only contains the actual points. Not the sampling points
         # Now the ret represents the occupancy of the points
         return ret[:, -1]
@@ -41,7 +41,8 @@ class Renderer(object):
                     npc_geo_feats=None, npc_col_feats=None,
                     is_tracker=False, cloud_pos=None,
                     pts_views_d=None, ray_pts_num=None,
-                    dynamic_r_query=None, exposure_feat=None):
+                    dynamic_r_query=None, exposure_feat=None, cur_c2w=None,
+                    fx=None, fy=None, cx=None, cy=None, cur_RGB=None):
         """
         Evaluates the occupancy and/or color value for the points.
 
@@ -77,7 +78,7 @@ class Renderer(object):
             pi = pi.unsqueeze(0)
             ret, valid_ray_mask, point_mask = decoders(pi, npc, stage, npc_geo_feats, npc_col_feats,
                                                        ray_pts_num, is_tracker, cloud_pos, pts_views_d,
-                                                       dynamic_r_query, exposure_feat)
+                                                       dynamic_r_query, exposure_feat, cur_c2w=cur_c2w, fx=fx, fy=fy, cx=cx, cy=cy, cur_RGB=cur_RGB)
             ret = ret.squeeze(0)
             if len(ret.shape) == 1 and ret.shape[0] == 4:
                 ret = ret.unsqueeze(0)
@@ -95,7 +96,7 @@ class Renderer(object):
     
     def render_batch_ray(self, npc, decoders, rays_d, rays_o, device, stage, gt_depth=None,
                          npc_geo_feats=None, npc_col_feats=None, is_tracker=False, cloud_pos=None,
-                         dynamic_r_query=None, exposure_feat=None):
+                         dynamic_r_query=None, exposure_feat=None, cur_c2w=None, fx=None, fy=None, cx=None, cy=None, cur_RGB=None):
         """
         Render color, depth, uncertainty and a valid ray mask from a batch of rays.
 
@@ -204,7 +205,7 @@ class Renderer(object):
             pointsf, decoders, npc, stage, device, npc_geo_feats,
             npc_col_feats, is_tracker, cloud_pos, rays_d_pts,
             ray_pts_num=ray_pts_num, dynamic_r_query=dynamic_r_query,
-            exposure_feat=exposure_feat)
+            exposure_feat=exposure_feat, cur_c2w=cur_c2w, fx=fx, fy=fy, cx=cx, cy=cy, cur_RGB=cur_RGB)
 
         with torch.no_grad():
             raw[torch.nonzero(~point_mask).flatten(), -1] = - 100.0
@@ -221,7 +222,7 @@ class Renderer(object):
             depth[~gt_non_zero_mask] = 0
         return depth, uncertainty, color, valid_ray_mask
 
-    def render_img(self, npc, decoders, c2w, device, stage, gt_depth=None,
+    def render_img(self, npc, decoders, c2w, device, stage, gt_depth=None, gt_color=None, 
                    npc_geo_feats=None, npc_col_feats=None,
                    dynamic_r_query=None, cloud_pos=None, exposure_feat=None):
         """
@@ -275,7 +276,7 @@ class Renderer(object):
                         cloud_pos=cloud_pos,
                         dynamic_r_query=dynamic_r_query[i:i +
                                                         ray_batch_size] if self.use_dynamic_radius else None,
-                        exposure_feat=exposure_feat)
+                        exposure_feat=exposure_feat, cur_c2w=c2w, fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy, cur_RGB=gt_color)
                 else:
                     gt_depth_batch = gt_depth[i:i+ray_batch_size]
                     ret = self.render_batch_ray(
@@ -284,7 +285,7 @@ class Renderer(object):
                         cloud_pos=cloud_pos,
                         dynamic_r_query=dynamic_r_query[i:i +
                                                         ray_batch_size] if self.use_dynamic_radius else None,
-                        exposure_feat=exposure_feat)
+                        exposure_feat=exposure_feat, cur_c2w=c2w, fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy, cur_RGB=gt_color)
 
                 depth, uncertainty, color, valid_ray_mask = ret
                 depth_list.append(depth.double())

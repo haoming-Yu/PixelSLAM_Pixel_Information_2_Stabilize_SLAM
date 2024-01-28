@@ -110,6 +110,7 @@ class Mapper(object):
         self.npc_geo_feats = None
         self.npc_col_feats = None
         self.optimizer = None
+        print("Mapper initiated.")
 
     def set_pipe(self, pipe):
         self.pipe = pipe
@@ -622,7 +623,7 @@ class Mapper(object):
                                                  is_tracker=True if self.BA else False,
                                                  cloud_pos=self.cloud_pos_tensor,
                                                  dynamic_r_query=r_query_list,
-                                                 exposure_feat=None)
+                                                 exposure_feat=None, cur_c2w=cur_c2w, fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy, cur_RGB=cur_gt_color)
             depth, uncertainty, color, valid_ray_mask = ret
 
             depth_mask = (batch_gt_depth > 0) & valid_ray_mask
@@ -692,7 +693,7 @@ class Mapper(object):
                 print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
                       ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
                 print(f'We are at {idx_iter_pruning} iteration, Now Start pruning')
-                _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.05)
+                _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.15)
                 self.npc_geo_feats = npc_geo_feats
                 self.npc_col_feats = npc_col_feats
                 number_pruned = number_pruned + _
