@@ -428,7 +428,7 @@ class MLP_geometry(nn.Module):
         cur_RGB should have the shape of (H, W), and only one picture is used here for now.
         """
         vertices = p.detach().cpu().numpy().reshape(-1, 3)
-        c2w = cur_c2w.cpu().numpy()
+        c2w = cur_c2w.detach().cpu().numpy()
         w2c = np.linalg.inv(c2w)
         ones = np.ones_like(vertices[:, 0]).reshape(-1, 1)
         homo_vertices = np.concatenate(
