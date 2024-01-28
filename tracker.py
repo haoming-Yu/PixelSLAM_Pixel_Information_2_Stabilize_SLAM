@@ -106,6 +106,9 @@ class Tracker(object):
         H, W = self.H, self.W
         optimizer.zero_grad()
         c2w = get_camera_from_tensor(camera_tensor)
+        bottom = torch.from_numpy(np.array([0, 0, 0, 1.]).reshape([1, 4])).type(
+            torch.float32).to(self.device)
+        cur_c2w = torch.cat([c2w, bottom], dim=0)
         Wedge = self.ignore_edge_W
         Hedge = self.ignore_edge_H
         cur_RGB = gt_color.detach().clone()
@@ -152,7 +155,7 @@ class Tracker(object):
                                              npc_col_feats=self.npc_col_feats,
                                              is_tracker=True, cloud_pos=self.cloud_pos,
                                              dynamic_r_query=batch_r_query,
-                                             exposure_feat=self.exposure_feat, cur_c2w=c2w, fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy, cur_RGB=cur_RGB)
+                                             exposure_feat=self.exposure_feat, cur_c2w=cur_c2w, fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy, cur_RGB=cur_RGB)
         depth, uncertainty, color, _ = ret
 
         uncertainty = uncertainty.detach()
