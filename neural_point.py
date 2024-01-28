@@ -41,7 +41,6 @@ class NeuralPointCloud(object):
                                             faiss.IndexIVFFlat(faiss.IndexFlatL2(3), 3, self.nlist, faiss.METRIC_L2))
         self.index.nprobe = cfg['pointcloud']['nprobe']
         setup_seed(cfg["setup_seed"])
-        print("NeuralPointCloud Initiated.")
 
     def cloud_pos(self, index=None):
         if index is None:

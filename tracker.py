@@ -79,7 +79,6 @@ class Tracker(object):
                                      renderer=self.renderer, verbose=self.verbose, device=self.device,
                                      vis_inside=cfg['tracking']['vis_inside'], total_iters=self.num_cam_iters)
         self.H, self.W, self.fx, self.fy, self.cx, self.cy = slam.H, slam.W, slam.fx, slam.fy, slam.cx, slam.cy
-        print("Tracker initiated.")
 
     def set_pipe(self, pipe):
         self.pipe = pipe

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 import torch.autograd.profiler as profiler
 import util
+import numpy as np
 
 class ConvEncoder(nn.Module):
     """
@@ -422,11 +423,11 @@ class MLP_geometry(nn.Module):
         else:
             self.actvn = lambda x: F.leaky_relu(x, 0.2)
 
-    def get_img_feature_at_pos(self, p, cur_c2w, fx, fy, cx, cy, cur_RGB):
+    def get_img_feature_at_pos(self, p, cur_c2w, fx, fy, cx, cy, cur_RGB, device):
         """
         cur_RGB should have the shape of (H, W), and only one picture is used here for now.
         """
-        vertices = p.reshape(-1, 3).cpu().numpy()
+        vertices = p.detach().cpu().numpy().reshape(-1, 3)
         c2w = cur_c2w.cpu().numpy()
         w2c = np.linalg.inv(c2w)
         ones = np.ones_like(vertices[:, 0]).reshape(-1, 1)
@@ -449,8 +450,9 @@ class MLP_geometry(nn.Module):
         W = cur_RGB.shape[0]
         H = cur_RGB.shape[1]
         cur_RGB = cur_RGB.reshape(1, 3, cur_RGB.shape[0], cur_RGB.shape[1])
-        self.img_encoder(cur_RGB)
-        latent = self.img_encoder.index(uv, image_size=(W, H)) # Now the size of latent should be (1, L, N_points)
+        self.img_encoder(cur_RGB.float())
+        uv = torch.tensor(uv).to(device)
+        latent = self.img_encoder.index(uv, image_size=torch.tensor([W, H]).to(device)) # Now the size of latent should be (1, L, N_points)
         latent = latent.transpose(1, 2).reshape(-1, self.img_encoder.latent_size) # (N_points, L)
 
         return latent
@@ -526,7 +528,7 @@ class MLP_geometry(nn.Module):
             npc, p, npc_geo_feats, is_tracker, cloud_pos, with_prune, dynamic_r_query=dynamic_r_query)  # get (N,c_dim), e.g. (N,32)
 
         img_feature = self.get_img_feature_at_pos(
-            p, cur_c2w, fx, fy, cx, cy, cur_RGB
+            p, cur_c2w, fx, fy, cx, cy, cur_RGB, device='cuda:0'
         ) # The size of img_feature should be latent size.
 
         valid_ray_mask = None
@@ -843,7 +845,7 @@ class POINT(nn.Module):
             case 'color':
                 geo_occ, ray_mask, point_mask = self.geo_decoder(p, npc, npc_geo_feats,
                                                                  pts_num=pts_num, is_tracker=is_tracker, cloud_pos=cloud_pos,
-                                                                 dynamic_r_query=dynamic_r_query)
+                                                                 dynamic_r_query=dynamic_r_query, cur_c2w=cur_c2w, fx=fx, fy=fy, cx=cx, cy=cy, cur_RGB=cur_RGB)
                 raw = self.color_decoder(p, npc, npc_col_feats,                                # returned (N,4)
                                          is_tracker=is_tracker, cloud_pos=cloud_pos,
                                          pts_views_d=pts_views_d,

@@ -113,7 +113,7 @@ meshing:
   eval_rec: True # if True, evaluates the F-score and depth L1 metrics of the mesh
   mesh_freq: -1 # meshing frame frequency for visualization
 pointcloud:
-  device: "cuda:0"
+  device: 0
   nn_num: 8 # how many nn to choose at most within search radius
   min_nn_num: 2 # if nn_num less than this, will skip this sample location
   N_add: 3 # how many point to add at one location (front and behind gt_depth)

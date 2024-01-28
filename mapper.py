@@ -110,12 +110,11 @@ class Mapper(object):
         self.npc_geo_feats = None
         self.npc_col_feats = None
         self.optimizer = None
-        print("Mapper initiated.")
 
     def set_pipe(self, pipe):
         self.pipe = pipe
 
-    def prune_by_occupancy(self, p, npc_geo_feats, npc_col_feats, indices, min_occupancy=0.005, coef_sigmoid=0.1):
+    def prune_by_occupancy(self, p, npc_geo_feats, npc_col_feats, indices, min_occupancy=0.005, coef_sigmoid=0.1, cur_c2w=None, fx=None, fy=None, cx=None, cy=None, cur_RGB=None):
         """
         Args:
             p: represents all points in the point cloud
@@ -128,7 +127,7 @@ class Mapper(object):
             2. return the refreshed npc_geo_feats
             3. return the refreshed npc_col_feats
         """
-        raw = self.renderer.get_occupancy_from_geo_mapper(p, self.decoders, self.npc, npc_geo_feats, device=self.device)
+        raw = self.renderer.get_occupancy_from_geo_mapper(p, self.decoders, self.npc, npc_geo_feats, device=self.device, cur_c2w=cur_c2w, fx=fx, fy=fy, cx=cx, cy=cy, cur_RGB=cur_RGB)
         # Here the frustum selection can not been done here by using p[indices], otherwise the gradients back propogation will be error.
         occupancy = torch.sigmoid(coef_sigmoid*raw)
         # print("Occupancy is as follows: ", occupancy)
@@ -693,7 +692,7 @@ class Mapper(object):
                 print('iter: ', joint_iter, ', time', f'{toc - tic:0.6f}',
                       ', geo_loss: ', f'{geo_loss.item():0.6f}', ', color_loss: ', f'{color_loss.item():0.6f}')
                 print(f'We are at {idx_iter_pruning} iteration, Now Start pruning')
-                _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.15)
+                _, npc_geo_feats, npc_col_feats = self.prune_by_occupancy(self.cloud_pos_tensor, npc_geo_feats, npc_col_feats, indices_for_frustum_selection, min_occupancy=0.05, cur_c2w=cur_c2w, fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy, cur_RGB=gt_color)
                 self.npc_geo_feats = npc_geo_feats
                 self.npc_col_feats = npc_col_feats
                 number_pruned = number_pruned + _
